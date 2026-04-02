@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import json
 from dataclasses import asdict
 from datetime import datetime, timezone
@@ -47,12 +48,24 @@ class LiveMonitorService:
         for frame in recent:
             if not frame.get("is_binary") or not frame.get("data_b64"):
                 continue
-            result = self.ws_decoder.decode_frame_base64(str(frame["data_b64"]))
+            data_b64 = str(frame["data_b64"])
+            result = self.ws_decoder.decode_frame_base64(data_b64)
+            raw_prefix_hex = None
+            raw_len = None
+            try:
+                raw = base64.b64decode(data_b64)
+                raw_len = len(raw)
+                raw_prefix_hex = raw[:24].hex()
+            except Exception:
+                pass
             decoded_items.append({
                 "timestamp": frame.get("timestamp"),
                 "request_id": frame.get("request_id"),
                 "url": frame.get("url"),
+                "host": self._classify_ws_host(frame.get("url")),
                 "opcode": frame.get("opcode"),
+                "raw_len": raw_len,
+                "raw_prefix_hex": raw_prefix_hex,
                 "error": result.error,
                 "message_count": len(result.messages),
                 "methods": [m.method for m in result.messages[:20]],
@@ -65,6 +78,42 @@ class LiveMonitorService:
             "cursor": cursor,
             "ws_urls": room_stats.get("ws_urls", []),
             "decoded_samples": decoded_items,
+        }
+
+    def debug_room_frames(self, room_id: str, limit: int = 20) -> dict[str, object]:
+        frames, cursor = self._get_sidecar().get_websocket_frames(room_id, since=0, direction="received")
+        recent = frames[-limit:] if limit > 0 else frames
+        items: list[dict[str, object]] = []
+        for idx, frame in enumerate(recent):
+            data_b64 = frame.get("data_b64")
+            raw_len = None
+            raw_prefix_hex = None
+            raw_prefix_text = None
+            if frame.get("is_binary") and data_b64:
+                try:
+                    raw = base64.b64decode(str(data_b64))
+                    raw_len = len(raw)
+                    raw_prefix_hex = raw[:32].hex()
+                    raw_prefix_text = raw[:32].decode("utf-8", errors="replace")
+                except Exception:
+                    pass
+            items.append({
+                "index": idx,
+                "timestamp": frame.get("timestamp"),
+                "request_id": frame.get("request_id"),
+                "url": frame.get("url"),
+                "host": self._classify_ws_host(frame.get("url")),
+                "opcode": frame.get("opcode"),
+                "is_binary": frame.get("is_binary", False),
+                "raw_len": raw_len,
+                "raw_prefix_hex": raw_prefix_hex,
+                "raw_prefix_text": raw_prefix_text,
+            })
+        return {
+            "room_id": room_id,
+            "total_frames": len(frames),
+            "cursor": cursor,
+            "frames": items,
         }
 
     def scan_rooms_once(self) -> dict[str, int]:
@@ -253,6 +302,14 @@ class LiveMonitorService:
         if msg.like_count:
             return f"{msg.nickname or '用户'} 点赞 {msg.like_count}"
         return msg.content or msg.method
+
+    def _classify_ws_host(self, url: object) -> str:
+        text = str(url or "")
+        if "frontier-pc" in text:
+            return "frontier-pc"
+        if "frontier-im" in text:
+            return "frontier-im"
+        return "other"
 
     def _millis_to_iso(self, value: int | None) -> str | None:
         if not value:
