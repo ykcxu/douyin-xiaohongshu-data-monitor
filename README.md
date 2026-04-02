@@ -71,6 +71,12 @@ py -3 -m app.cli.analyze_douyin_trace --input data/raw/douyin/request-trace/douy
 py -3 -m app.cli.probe_douyin_live_room --room-id 7044145585217083655 --account-id douyin_demo
 ```
 
+如果要在浏览器页面上下文里复用 `frontierSign` 做带签名请求探测，可以直接跑：
+
+```bash
+py -3 -m app.cli.probe_douyin_signed_api --account-id douyin_demo --room-id 7044145585217083655 --preset room-web-enter
+```
+
 ## 数据库迁移
 
 ```bash

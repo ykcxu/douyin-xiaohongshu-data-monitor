@@ -198,6 +198,19 @@ class HttpDouyinLiveStatusCollector(DouyinLiveStatusCollector):
             "webcast_setting": "https://live.douyin.com/webcast/setting/?" + urlencode(common),
             "webcast_user_me": "https://live.douyin.com/webcast/user/me/?"
             + urlencode({**common, "room_id": "0"}),
+            "room_web_enter": "https://live.douyin.com/webcast/room/web/enter/?"
+            + urlencode(
+                {
+                    **common,
+                    "web_rid": web_rid,
+                    "room_id_str": room.room_id,
+                    "enter_source": "web_live",
+                    "is_need_double_stream": "true",
+                    "enter_type": "1",
+                    "prefetch": "0",
+                    "version_code": "251700",
+                }
+            ),
             "similar_room_by_anchor": "https://live.douyin.com/webcast/web/similar_room_by_anchor/?"
             + urlencode({**common, "web_rid": web_rid, "count": "5", "offset": "0"}),
         }
@@ -219,10 +232,83 @@ class HttpDouyinLiveStatusCollector(DouyinLiveStatusCollector):
             "status_code": response.status_code,
         }
         try:
-            result["body"] = response.json()
+            body = response.json()
+            result["body"] = body
+            summary = self._summarize_debug_body(str(response.url), body)
+            if summary:
+                result["body_summary"] = summary
         except json.JSONDecodeError:
             result["body_preview"] = response.text[:5000]
         return result
+
+    def _summarize_debug_body(self, url: str, body: Any) -> dict[str, Any] | None:
+        if not isinstance(body, dict):
+            return None
+
+        summary: dict[str, Any] = {}
+        if "status_code" in body:
+            summary["api_status_code"] = body.get("status_code")
+        if "message" in body:
+            summary["message"] = body.get("message")
+        if "prompts" in body:
+            summary["prompts"] = body.get("prompts")
+
+        if "/webcast/room/web/enter/" in url:
+            summary.update(self._extract_room_web_enter_summary(body))
+        return summary or None
+
+    def _extract_room_web_enter_summary(self, body: dict[str, Any]) -> dict[str, Any]:
+        data = body.get("data")
+        room_payload = self._find_nested_dict(data, {"room", "roomInfo", "room_data"})
+        owner_payload = self._find_nested_dict(data, {"owner", "anchor"})
+        stream_payload = self._find_nested_dict(data, {"stream_url", "streamUrl", "web_stream_url"})
+
+        summary: dict[str, Any] = {
+            "data_keys": sorted(data.keys()) if isinstance(data, dict) else None,
+            "room_payload_keys": sorted(room_payload.keys()) if isinstance(room_payload, dict) else None,
+            "has_stream_payload": isinstance(stream_payload, dict),
+        }
+        if isinstance(room_payload, dict):
+            summary["room_id"] = self._normalize_text(
+                room_payload.get("id_str")
+                or room_payload.get("room_id")
+                or room_payload.get("roomId")
+                or room_payload.get("web_rid")
+            )
+            summary["title"] = self._normalize_text(room_payload.get("title"))
+            summary["status"] = self._normalize_text(
+                room_payload.get("status")
+                or room_payload.get("live_status")
+                or room_payload.get("liveStatus")
+            )
+            summary["user_count"] = self._extract_int(
+                room_payload.get("user_count")
+                or room_payload.get("room_view_stats", {}).get("display_value")
+            )
+            summary["total_user_count"] = self._extract_int(room_payload.get("total_user_count"))
+            summary["like_count"] = self._extract_int(room_payload.get("like_count"))
+        if isinstance(owner_payload, dict):
+            summary["owner_id"] = self._normalize_text(owner_payload.get("id_str") or owner_payload.get("id"))
+            summary["owner_nickname"] = self._normalize_text(
+                owner_payload.get("nickname") or owner_payload.get("nick_name")
+            )
+        return {key: value for key, value in summary.items() if value is not None}
+
+    def _find_nested_dict(self, value: Any, candidate_keys: set[str]) -> dict[str, Any] | None:
+        if isinstance(value, dict):
+            for key, nested in value.items():
+                if key in candidate_keys and isinstance(nested, dict):
+                    return nested
+            for nested in value.values():
+                found = self._find_nested_dict(nested, candidate_keys)
+                if found is not None:
+                    return found
+        if isinstance(value, list):
+            for item in value:
+                found = self._find_nested_dict(item, candidate_keys)
+                if found is not None:
+                    return found
+        return None
 
     def _extract_page_state(self, html: str) -> dict[str, Any]:
         room_store_candidates = self._extract_all_escaped_json_between(
