@@ -19,6 +19,8 @@ dependencies = [
   "apscheduler>=3.10,<4.0",
   "httpx>=0.27,<1.0",
   "playwright>=1.52,<2.0",
+  "protobuf>=5.0,<7.0",
+  "grpcio-tools>=1.60,<2.0",
 ]
 
 [tool.setuptools]

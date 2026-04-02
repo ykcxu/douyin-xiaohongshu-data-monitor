@@ -56,7 +56,7 @@ def upgrade() -> None:
         sa.Column("homepage_url", sa.Text(), nullable=True),
         sa.Column("live_room_url", sa.Text(), nullable=True),
         sa.Column("discover_source", sa.String(length=128), nullable=True),
-        sa.Column("tags", postgresql.ARRAY(sa.String()), nullable=True),
+        sa.Column("tags", sa.JSON(), nullable=True),
         sa.Column("notes", sa.Text(), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),

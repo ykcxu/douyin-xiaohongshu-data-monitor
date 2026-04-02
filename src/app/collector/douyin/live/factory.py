@@ -1,3 +1,4 @@
+from app.collector.douyin.live.browser_provider import BrowserDouyinLiveStatusCollector
 from app.collector.douyin.live.providers import HttpDouyinLiveStatusCollector
 from app.collector.douyin.live.status_collector import (
     DouyinLiveStatusCollector,
@@ -15,5 +16,10 @@ def create_douyin_live_status_collector() -> DouyinLiveStatusCollector:
         return StubDouyinLiveStatusCollector()
     if settings.douyin_live_provider == "http":
         return HttpDouyinLiveStatusCollector()
+    if settings.douyin_live_provider == "browser":
+        return BrowserDouyinLiveStatusCollector(
+            timeout_seconds=30,
+            headless=getattr(settings, 'douyin_browser_headless', True),
+        )
 
     raise ValueError(f"Unsupported Douyin live provider: {settings.douyin_live_provider}")

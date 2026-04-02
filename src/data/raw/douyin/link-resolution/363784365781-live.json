@@ -1,0 +1,27 @@
+{
+  "room_id": "7624033765924326144",
+  "web_rid": "363784365781",
+  "status": 2,
+  "status_str": "直播中",
+  "title": "希望学官方直播间正在直播中~",
+  "user_count": 10,
+  "cover": "https://p11-webcast-sign.douyinpic.com/image-cut-tos-priv/a857597dd6202c12ee48ca05b4b664c1~tplv-qz53dukwul-common-resize:0:0.image",
+  "stream_urls": {
+    "flv": {
+      "FULL_HD1": "http://pull-flv-l26.douyincdn.com/third/stream-695586280437187046_or4.flv",
+      "HD1": "http://pull-flv-l26.douyincdn.com/third/stream-695586280437187046_hd.flv",
+      "SD1": "http://pull-flv-l26.douyincdn.com/third/stream-695586280437187046_ld.flv",
+      "SD2": "http://pull-flv-l26.douyincdn.com/third/stream-695586280437187046_sd.flv"
+    },
+    "hls": {
+      "FULL_HD1": "http://pull-hls-l26.douyincdn.com/third/stream-695586280437187046_or4.m3u8",
+      "HD1": "http://pull-hls-l26.douyincdn.com/third/stream-695586280437187046_hd.m3u8",
+      "SD1": "http://pull-hls-l26.douyincdn.com/third/stream-695586280437187046_ld.m3u8",
+      "SD2": "http://pull-hls-l26.douyincdn.com/third/stream-695586280437187046_sd.m3u8"
+    }
+  },
+  "websocket_url": "wss://webcast100-ws-web-lf.douyin.com/webcast/im/push/v2/",
+  "websocket_frames_captured": 34,
+  "data_file": "data/raw/douyin/request-trace/douyin_demo-20260402T100914Z.jsonl",
+  "captured_at": "2026-04-02T10:09:14Z"
+}

@@ -1,0 +1,20 @@
+{
+  "input_share_url": "https://v.douyin.com/AbsjfpKcBKQ/",
+  "redirect_chain": [
+    "https://v.douyin.com/AbsjfpKcBKQ/",
+    "https://webcast.amemv.com/douyin/webcast/reflow/7624033765924326144?u_code=163aima80&did=MS4wLjABAAAA-J7uuN5bhytvlWpGelHEbi0n2vfAR23xD0L2uehKVVySZSKCTcwYBouaz7p4HZeg&iid=MS4wLjABAAAAIfcwOD4WgVDXjY5VN9c6v5SzNvVSwi7Jg5lFAS8bCRcO3Csd8dqw7ovmI6NYNtuY&with_sec_did=1&sec_user_id=MS4wLjABAAAAr7uTN4oMCxAG94u42fDpZXRrRvN0ycVe6f72sLia_osqpNRAoCpnkWYnKIRiSWwd&ecom_share_track_params=%7B%22is_ec_shopping%22%3A%221%22%2C%22secuid%22%3A%22MS4wLjABAAAAJpvUX7Ep15UKYDUqtDn5A2v4oZx-c2xPDbN0Xdw0KcY%22%2C%22enter_from%22%3A%22live%22%2C%22share_previous_page%22%3A%22live%22%2C%22share_id%22%3A%22MS4wLjABAAAAJpvUX7Ep15UKYDUqtDn5A2v4oZx-c2xPDbN0Xdw0KcY_7624033765924326144_1775112320168%22%2C%22share_action_type%22%3A%22click%22%7D&extra_params=%7B%22from_request_id%22%3A%22null%22%2C%22im_channel_invite_id%22%3A%22%22%2C%22camera_id%22%3A%220%22%2C%22match_id%22%3A%220%22%2C%22camera_type%22%3A%22%22%2C%22life_extra_info%22%3A%22%22%2C%22live_common_share_params%22%3A%22%7B%5C%22sec_relation_user_id%5C%22%3A%5C%22MS4wLjABAAAAJpvUX7Ep15UKYDUqtDn5A2v4oZx-c2xPDbN0Xdw0KcY%5C%22%2C%5C%22bcm%5C%22%3A%5C%22%7B%5C%5C%5C%22bcm_share_id%5C%5C%5C%22%3A%5C%5C%5C%226eefa521-0196-4c42-96b6-88e78b14003e%5C%5C%5C%22%7D%5C%22%7D%22%7D&share_platform=copy&share_user_id=99253719346&utm_source=copy&utm_campaign=client_share&utm_medium=android&app=aweme&ug_share_id=d6966f1f90909_1775112320172&share_extra_params=%7B%22live_common_share_params%22%3A%22%7B%5C%22sec_relation_user_id%5C%22%3A%5C%22MS4wLjABAAAAJpvUX7Ep15UKYDUqtDn5A2v4oZx-c2xPDbN0Xdw0KcY%5C%22%2C%5C%22bcm%5C%22%3A%5C%22%7B%5C%5C%5C%22bcm_share_id%5C%5C%5C%22%3A%5C%5C%5C%226eefa521-0196-4c42-96b6-88e78b14003e%5C%5C%5C%22%7D%5C%22%7D%22%2C%22match_id%22%3A%220%22%2C%22camera_id%22%3A%220%22%2C%22camera_type%22%3A%220%22%7D"
+  ],
+  "final_room_url": "https://webcast.amemv.com/douyin/webcast/reflow/7624033765924326144",
+  "room_id_candidates": ["7624033765924326144"],
+  "anchor_info": {
+    "nickname": "希望学网校",
+    "sec_user_id": "MS4wLjABAAAAr7uTN4oMCxAG94u42fDpZXRrRvN0ycVe6f72sLia_osqpNRAoCpnkWYnKIRiSWwd"
+  },
+  "share_params": {
+    "share_platform": "copy",
+    "share_user_id": "99253719346",
+    "enter_from": "live"
+  },
+  "resolved_at": "2026-04-02T09:04:00Z",
+  "status": "success"
+}

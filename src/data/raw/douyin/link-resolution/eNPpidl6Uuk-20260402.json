@@ -1,0 +1,27 @@
+{
+  "input_share_url": "https://v.douyin.com/eNPpidl6Uuk/",
+  "redirect_chain": [
+    "https://v.douyin.com/eNPpidl6Uuk/",
+    "https://webcast.amemv.com/douyin/webcast/reflow/7624033765924326144"
+  ],
+  "final_room_url": "https://live.douyin.com/7624033765924326144",
+  "room_id_candidates": ["7624033765924326144"],
+  "anchor_info": {
+    "nickname": "希望学网校",
+    "sec_user_id": "MS4wLjABAAAAr7uTN4oMCxAG94u42fDpZXRrRvN0ycVe6f72sLia_osqpNRAoCpnkWYnKIRiSWwd"
+  },
+  "live_status": {
+    "status": "normal",
+    "is_live": false,
+    "checked_at": "2026-04-02T09:27:32Z"
+  },
+  "share_params": {
+    "share_platform": "copy",
+    "share_user_id": "99253719346"
+  },
+  "data_files": {
+    "trace": "data/raw/douyin/request-trace/douyin_demo-20260402T092624Z.jsonl",
+    "probe": "data/raw/douyin/probe/douyin_demo-7624033765924326144-20260402T092732Z.json"
+  },
+  "note": "用户报告正在直播，但抓取时状态为normal。可能直播刚结束或页面状态有延迟。"
+}

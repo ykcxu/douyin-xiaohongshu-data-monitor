@@ -1,0 +1,248 @@
+syntax = "proto3";
+
+package douyin_webcast;
+
+// ─────────────────────────────────────────────
+// 外层帧：WebSocket 每条二进制消息
+// ─────────────────────────────────────────────
+message HeadersList {
+  string key   = 1;
+  string value = 2;
+}
+
+message PushFrame {
+  uint64              seqId           = 1;
+  uint64              logId           = 2;
+  uint64              service         = 3;
+  uint64              method          = 4;
+  repeated HeadersList headersList    = 5;
+  string              payloadEncoding = 6;
+  string              payloadType     = 7;
+  bytes               payload         = 8;
+}
+
+// ─────────────────────────────────────────────
+// payload gzip 解压后 → Response
+// ─────────────────────────────────────────────
+message Response {
+  repeated Message messagesList = 1;
+  string           cursor       = 2;
+  uint64           fetchInterval = 3;
+  uint64           now          = 4;
+  string           internalExt  = 5;
+  uint32           fetchType    = 6;
+  map<string, string> routeParams = 7;
+  uint64           heartbeatDuration = 8;
+  bool             needAck      = 9;
+  string           pushServer   = 10;
+  uint32           liveCursor   = 11;
+  bool             historyNoMore = 12;
+}
+
+message Message {
+  string method  = 1;
+  bytes  payload = 2;
+  uint64 msgId   = 3;
+  uint32 msgType = 4;
+  uint64 offset  = 5;
+  bool   needWrappedAck = 6;
+  string wrappedSource  = 7;
+}
+
+// ─────────────────────────────────────────────
+// ACK 应答（客户端发给服务端，保持连接）
+// ─────────────────────────────────────────────
+message PushFrameWithSeq {
+  uint64 logId       = 1;
+  string payloadType = 7;
+  bytes  payload     = 8;
+}
+
+// ─────────────────────────────────────────────
+// 通用用户结构
+// ─────────────────────────────────────────────
+message User {
+  uint64 id            = 1;
+  uint64 shortId       = 2;
+  string nickname      = 3;
+  uint32 gender        = 4;
+  string signature     = 5;
+  uint32 level         = 6;
+  uint64 birthday      = 7;
+  string telephone     = 8;
+  Image  avatarThumb   = 9;
+  Image  avatarMedium  = 10;
+  Image  avatarLarge   = 11;
+  bool   verified      = 12;
+  uint32 experience    = 14;
+  string city          = 15;
+  uint32 status        = 16;
+  uint64 createTime    = 17;
+  uint64 modifyTime    = 18;
+  uint32 secret        = 19;
+  string shareQrcodeUri = 20;
+  uint32 incomeSharePercent = 21;
+  Image  avatarLarger  = 22;
+  string secUid        = 23;
+  uint32 totalFavorited = 24;
+  uint32 userRole      = 27;
+  uint64 followInfo    = 28;
+}
+
+message Image {
+  repeated string urlsList = 1;
+  string uri               = 2;
+  uint32 height            = 3;
+  uint32 width             = 4;
+}
+
+// ─────────────────────────────────────────────
+// 弹幕 / 聊天消息
+// ─────────────────────────────────────────────
+message WebcastChatMessage {
+  Common common   = 1;
+  User   user     = 2;
+  string content  = 3;
+  bool   visibleToSender = 4;
+  Image  backgroundImage = 5;
+  string fullScreenTextColor = 6;
+  Image  backgroundImageV2   = 7;
+  Image  emojiContent        = 9;
+  uint64 rtfContent          = 10;
+}
+
+// ─────────────────────────────────────────────
+// 礼物消息
+// ─────────────────────────────────────────────
+message WebcastGiftMessage {
+  Common   common      = 1;
+  uint64   giftId      = 2;
+  uint32   fanTicketCount = 3;
+  uint32   groupCount  = 4;
+  uint32   repeatCount = 5;
+  uint64   comboCount  = 6;
+  User     user        = 7;
+  GiftInfo gift        = 8;
+  uint32   repeatEnd   = 9;
+  uint64   groupId     = 10;
+  uint64   monitorExtra = 11;
+  uint64   rankingScore = 12;
+  bool     sendType    = 13;
+  uint64   publicAreaCommon = 14;
+  uint64   trayDisplayText  = 15;
+}
+
+message GiftInfo {
+  uint64 id      = 1;
+  string name    = 2;
+  uint32 type    = 3;
+  uint64 diamondCount = 4;
+  Image  image   = 6;
+  string describe = 7;
+  uint64 duration = 8;
+  uint32 status  = 9;
+}
+
+// ─────────────────────────────────────────────
+// 点赞消息
+// ─────────────────────────────────────────────
+message WebcastLikeMessage {
+  Common common    = 1;
+  uint32 count     = 2;
+  uint64 total     = 3;
+  uint64 color     = 4;
+  User   user      = 5;
+  string icon      = 6;
+  double displayControlInfo = 7;
+}
+
+// ─────────────────────────────────────────────
+// 成员进房消息
+// ─────────────────────────────────────────────
+message WebcastMemberMessage {
+  Common common          = 1;
+  User   user            = 2;
+  uint32 memberCount     = 3;
+  User   operator        = 4;
+  bool   isSetToAdmin    = 5;
+  bool   isTopUser       = 6;
+  uint64 rankingScore    = 7;
+  uint64 topUserNo       = 8;
+  uint64 popStr          = 9;
+  uint64 enterType       = 10;
+  uint64 action          = 11;
+  string actionDescription = 12;
+  uint64 userId          = 13;
+  uint64 effectConfig    = 14;
+  uint64 entranceAttr    = 17;
+}
+
+// ─────────────────────────────────────────────
+// 关注 / 分享消息
+// ─────────────────────────────────────────────
+message WebcastSocialMessage {
+  Common common     = 1;
+  User   user       = 2;
+  uint64 shareType  = 3;
+  uint64 action     = 4;
+  uint64 followCount = 6;
+}
+
+// ─────────────────────────────────────────────
+// 在线人数
+// ─────────────────────────────────────────────
+message WebcastRoomUserSeqMessage {
+  Common         common     = 1;
+  repeated Seats seatsList  = 2;
+  uint64         total      = 3;
+  uint64         totalPvForAnchor = 4;
+}
+
+message Seats {
+  uint64 lastRankScore = 1;
+  User   user          = 2;
+  uint64 rank          = 3;
+  uint64 delta         = 4;
+}
+
+// ─────────────────────────────────────────────
+// 房间控制（开播/下播）
+// ─────────────────────────────────────────────
+message WebcastControlMessage {
+  Common common = 1;
+  uint32 status = 2;
+}
+
+// ─────────────────────────────────────────────
+// 房间统计快照
+// ─────────────────────────────────────────────
+message WebcastRoomStatsMessage {
+  Common common          = 1;
+  string displayLong     = 2;
+  string displayShort    = 3;
+  string displayValue    = 4;
+  string incr            = 5;
+  uint64 total           = 6;
+}
+
+// ─────────────────────────────────────────────
+// Common 公共字段（大部分消息都带）
+// ─────────────────────────────────────────────
+message Common {
+  string method            = 1;
+  uint64 msgId             = 2;
+  uint64 roomId            = 3;
+  uint64 createTime        = 4;
+  uint32 monitor           = 5;
+  bool   isShowMsg         = 6;
+  string describe          = 7;
+  uint64 displayText       = 8;
+  uint64 foldType          = 9;
+  uint64 anchorId          = 10;
+  string priorityScore     = 11;
+  uint64 logId             = 12;
+  uint64 magicBadgeScore   = 13;
+  uint64 userData          = 14;
+  Image  userLabel         = 15;
+  uint64 displayType       = 17;
+}
