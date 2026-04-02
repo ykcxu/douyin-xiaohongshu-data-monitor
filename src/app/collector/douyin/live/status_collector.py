@@ -7,7 +7,7 @@ from typing import Protocol
 from app.models.douyin_live_room import DouyinLiveRoom
 
 
-@dataclass(slots=True)
+@dataclass
 class LiveRoomStatus:
     room_id: str
     fetched_at: datetime

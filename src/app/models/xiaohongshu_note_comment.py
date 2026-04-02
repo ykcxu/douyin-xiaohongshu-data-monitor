@@ -1,4 +1,7 @@
+from __future__ import annotations
+
 from datetime import datetime
+from typing import Optional
 
 from sqlalchemy import BigInteger, DateTime, ForeignKey, Integer, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column
@@ -17,13 +20,13 @@ class XiaohongshuNoteComment(Base):
     )
     note_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
     comment_id: Mapped[str] = mapped_column(String(128), nullable=False, unique=True, index=True)
-    parent_comment_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
-    comment_level: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    user_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
-    nickname: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    content: Mapped[str | None] = mapped_column(Text, nullable=True)
-    like_count: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
-    comment_time: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    parent_comment_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, index=True)
+    comment_level: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    user_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, index=True)
+    nickname: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    content: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    like_count: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
+    comment_time: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
     status: Mapped[str] = mapped_column(String(32), default="visible", nullable=False, index=True)
-    raw_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    raw_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

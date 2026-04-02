@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from functools import lru_cache
 from pathlib import Path
 
@@ -12,12 +14,14 @@ class Settings(BaseSettings):
     app_host: str = Field(default="0.0.0.0", alias="APP_HOST")
     app_port: int = Field(default=8000, alias="APP_PORT")
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
+    auto_create_schema: bool = Field(default=False, alias="AUTO_CREATE_SCHEMA")
 
     postgres_db: str = Field(default="monitoring", alias="POSTGRES_DB")
     postgres_user: str = Field(default="monitoring", alias="POSTGRES_USER")
     postgres_password: str = Field(default="change_me", alias="POSTGRES_PASSWORD")
     postgres_host: str = Field(default="localhost", alias="POSTGRES_HOST")
     postgres_port: int = Field(default=5432, alias="POSTGRES_PORT")
+    database_url: str | None = Field(default=None, alias="DATABASE_URL")
 
     redis_host: str = Field(default="localhost", alias="REDIS_HOST")
     redis_port: int = Field(default=6379, alias="REDIS_PORT")
@@ -38,6 +42,8 @@ class Settings(BaseSettings):
 
     @property
     def sqlalchemy_database_uri(self) -> str:
+        if self.database_url:
+            return self.database_url
         return (
             "postgresql+psycopg://"
             f"{self.postgres_user}:{self.postgres_password}"

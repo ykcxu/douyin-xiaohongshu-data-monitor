@@ -15,6 +15,7 @@ from app.api.routes.xiaohongshu_data import router as xiaohongshu_data_router
 from app.api.routes.xiaohongshu_ingest import router as xiaohongshu_ingest_router
 from app.config.settings import get_settings
 from app.scheduler.runtime import SchedulerRuntime
+from app.services.bootstrap import init_db
 
 settings = get_settings()
 scheduler_runtime = SchedulerRuntime()
@@ -22,6 +23,7 @@ scheduler_runtime = SchedulerRuntime()
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    init_db()
     scheduler_runtime.start()
     try:
         yield

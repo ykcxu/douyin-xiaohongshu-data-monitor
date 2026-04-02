@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 
 
-@dataclass(slots=True)
+@dataclass
 class DouyinLiveRequestContext:
     account_id: str | None
     storage_state_path: Path | None

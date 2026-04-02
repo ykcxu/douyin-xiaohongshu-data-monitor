@@ -7,7 +7,7 @@ name = "douyin-xiaohongshu-monitor"
 version = "0.1.0"
 description = "Douyin and Xiaohongshu monitoring service."
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.9"
 dependencies = [
   "alembic>=1.13,<2.0",
   "fastapi>=0.115,<1.0",
