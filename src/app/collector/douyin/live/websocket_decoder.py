@@ -24,7 +24,7 @@ import base64
 import gzip
 import json
 import sys
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -178,6 +178,13 @@ class DouyinWebSocketDecoder:
             pb_msg.ParseFromString(msg.payload)
             getattr(self, parse_fn)(pb_msg, base)
         except Exception as e:
+            # 对真实 trace 中字段不稳定的消息，走 schema-free fallback
+            if method == "WebcastMemberMessage":
+                if self._fallback_parse_member(msg.payload, base):
+                    return base
+            elif method == "WebcastRoomUserSeqMessage":
+                if self._fallback_parse_room_user_seq(msg.payload, base):
+                    return base
             base.content = f"[解析失败: {e}]"
 
         return base
@@ -244,6 +251,125 @@ class DouyinWebSocketDecoder:
         self._fill_common(msg.common, out)
         out.content = msg.displayLong or msg.displayShort or msg.displayValue
 
+    # ── fallback: schema-free protobuf field scan ──────────────────────────
+
+    def _decode_varint(self, data: bytes, pos: int) -> tuple[int, int]:
+        result = 0
+        shift = 0
+        while True:
+            b = data[pos]
+            pos += 1
+            result |= (b & 0x7F) << shift
+            if not (b & 0x80):
+                return result, pos
+            shift += 7
+
+    def _parse_raw_fields(self, data: bytes) -> list[tuple[int, int, Any]]:
+        pos = 0
+        fields: list[tuple[int, int, Any]] = []
+        while pos < len(data):
+            try:
+                tag, pos = self._decode_varint(data, pos)
+                field_num, wire_type = tag >> 3, tag & 0x7
+                if wire_type == 0:
+                    value, pos = self._decode_varint(data, pos)
+                    fields.append((field_num, wire_type, value))
+                elif wire_type == 2:
+                    length, pos = self._decode_varint(data, pos)
+                    value = data[pos:pos + length]
+                    pos += length
+                    fields.append((field_num, wire_type, value))
+                elif wire_type == 1:
+                    pos += 8
+                elif wire_type == 5:
+                    pos += 4
+                else:
+                    break
+            except Exception:
+                break
+        return fields
+
+    def _safe_decode_utf8(self, data: bytes) -> str:
+        try:
+            return data.decode("utf-8")
+        except Exception:
+            return ""
+
+    def _fallback_parse_member(self, payload: bytes, out: DecodedMessage) -> bool:
+        fields = self._parse_raw_fields(payload)
+        if not fields:
+            return False
+
+        field_map: dict[int, list[tuple[int, Any]]] = {}
+        for fn, wt, val in fields:
+            field_map.setdefault(fn, []).append((wt, val))
+
+        # field 1 = Common, field 2 = User(不稳定，手动抽取昵称/ID), field 3 = memberCount
+        common_raw = field_map.get(1, [(None, None)])[0][1]
+        if isinstance(common_raw, (bytes, bytearray)):
+            try:
+                common = pb.Common()
+                common.ParseFromString(common_raw)
+                self._fill_common(common, out)
+            except Exception:
+                pass
+
+        user_raw = field_map.get(2, [(None, None)])[0][1]
+        if isinstance(user_raw, (bytes, bytearray)):
+            user_fields = self._parse_raw_fields(user_raw)
+            for fn, wt, val in user_fields:
+                if fn == 1 and wt == 0:
+                    out.user_id = int(val)
+                elif fn in (3, 68) and wt == 2:
+                    name = self._safe_decode_utf8(val).strip()
+                    if name:
+                        out.nickname = name
+                        break
+
+        member_count = field_map.get(3, [(None, 0)])[0][1]
+        if isinstance(member_count, int):
+            out.online_count = member_count
+
+        out.content = f"{out.nickname or '用户'} 进入直播间"
+        out.raw = {
+            "fallback": True,
+            "member_count": out.online_count,
+            "field_keys": sorted(field_map.keys()),
+        }
+        return True
+
+    def _fallback_parse_room_user_seq(self, payload: bytes, out: DecodedMessage) -> bool:
+        fields = self._parse_raw_fields(payload)
+        if not fields:
+            return False
+
+        field_map: dict[int, list[tuple[int, Any]]] = {}
+        for fn, wt, val in fields:
+            field_map.setdefault(fn, []).append((wt, val))
+
+        common_raw = field_map.get(1, [(None, None)])[0][1]
+        if isinstance(common_raw, (bytes, bytearray)):
+            try:
+                common = pb.Common()
+                common.ParseFromString(common_raw)
+                self._fill_common(common, out)
+            except Exception:
+                pass
+
+        # 实测 field 7 是 varint 在线人数；field 3 常是座位数/列表长度，不是总在线
+        total = field_map.get(7, [(None, 0)])[0][1]
+        if not isinstance(total, int):
+            total = field_map.get(3, [(None, 0)])[0][1]
+        if isinstance(total, int):
+            out.online_count = total
+
+        out.content = f"当前在线人数: {out.online_count}"
+        out.raw = {
+            "fallback": True,
+            "field_keys": sorted(field_map.keys()),
+        }
+        return True
+
 
 # ─────────────────────────────────────────────────────────────
 # Trace 文件分析（兼容旧接口）
@@ -280,12 +406,16 @@ def analyze_websocket_trace(trace_file: str) -> dict[str, Any]:
             except json.JSONDecodeError:
                 continue
 
-            ev_type = event.get("type", "")
+            # 兼容多种 trace 格式
+            ev_type = event.get("event") or event.get("type", "")
             frame_b64 = None
 
-            # 兼容不同 trace 格式
             if ev_type in ("cdp_websocket_frame_received", "cdp_websocket_frame_sent"):
-                frame_b64 = event.get("response", {}).get("data")
+                # 本项目 trace 格式：payload_preview 字段
+                frame_b64 = event.get("payload_preview") or event.get("response", {}).get("data")
+                # 只处理二进制帧（opcode=2），忽略文本控制帧
+                if event.get("opcode") not in (None, 2):
+                    continue
             elif ev_type == "websocket_frame":
                 frame_b64 = event.get("data")
 

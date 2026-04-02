@@ -64,8 +64,10 @@ class BrowserLoginManager:
         login_url: str | None = None,
         *,
         operator: str | None = None,
+        fallback_wait_seconds: int = 600,
     ) -> Path:
         resolved_login_url = self.resolve_login_url(platform, login_url)
+        state_file = self.state_file(platform, account_id)
         with sync_playwright() as playwright:
             context = self.create_context(playwright, platform, account_id)
             page = context.new_page()
@@ -79,11 +81,19 @@ class BrowserLoginManager:
                 input()
             except EOFError:
                 # In non-interactive environments (like OpenClaw exec), stdin may be unavailable.
-                # Wait a generous amount of time so a human can finish QR login instead of auto-closing too early.
+                # Keep the browser open and wait either for a signal file or for the timeout.
+                signal_file = state_file.with_suffix(".ready")
+                if signal_file.exists():
+                    signal_file.unlink()
                 print(
-                    f"[{platform}] stdin unavailable; keeping browser open for up to {fallback_wait_seconds} seconds before saving storage_state..."
+                    f"[{platform}] stdin unavailable; keeping browser open for up to {fallback_wait_seconds} seconds before saving storage_state... "
+                    f"Create signal file to continue early: {signal_file}"
                 )
-                page.wait_for_timeout(fallback_wait_seconds * 1000)
+                for _ in range(fallback_wait_seconds):
+                    if signal_file.exists():
+                        signal_file.unlink()
+                        break
+                    page.wait_for_timeout(1000)
             state_file = self.save_state(context, platform, account_id)
             cookie_hash = self.compute_cookie_hash(state_file)
             browser = context.browser

@@ -13,12 +13,7 @@ import json
 import sys
 from pathlib import Path
 
-from app.collector.douyin.live.websocket_decoder import (
-    DouyinWebSocketDecoder,
-    DouyinDanmakuExtractor,
-    analyze_websocket_trace,
-)
-import base64
+from app.collector.douyin.live.websocket_decoder import analyze_websocket_trace
 
 
 def main() -> int:
@@ -26,54 +21,53 @@ def main() -> int:
     parser.add_argument("--input", "-i", type=str, required=True, help="Input trace file")
     parser.add_argument("--output", "-o", type=str, help="Output file (optional)")
     parser.add_argument("--format", choices=["summary", "full"], default="summary", help="Output format")
-    
+    parser.add_argument("--limit", type=int, default=20, help="Sample message limit")
+
     args = parser.parse_args()
-    
+
     input_path = Path(args.input)
     if not input_path.exists():
         print(f"Error: Input file not found: {args.input}", file=sys.stderr)
         return 1
-        
+
     print(f"Analyzing WebSocket frames from: {input_path}")
     results = analyze_websocket_trace(str(input_path))
-    
+
     if "error" in results:
         print(f"Error: {results['error']}", file=sys.stderr)
         return 1
-        
-    # Print summary
+
+    stats = results.get("stats", {})
+    messages = results.get("messages", [])
+
     print(f"\n=== WebSocket Frame Analysis ===")
-    print(f"Total frames: {results['total_frames']}")
-    print(f"  - Gzip frames: {results['stats']['gzip_frames']}")
-    print(f"  - Raw frames: {results['stats']['raw_frames']}")
-    print(f"  - Decode errors: {results['stats']['decode_errors']}")
-    print(f"\nExtracted messages: {len(results['messages'])}")
-    
-    if results['messages']:
-        print(f"\n=== Sample Messages ===")
-        for msg in results['messages'][:10]:
-            print(f"  [{msg.get('confidence', 'unknown')}] {msg.get('type', 'unknown')}: {msg.get('content', '')[:100]}")
-            
+    print(f"Total frames : {results['total_frames']}")
+    print(f"Total messages: {len(messages)}")
+    print(f"\nMessage type breakdown:")
+    for k, v in stats.items():
+        if v:
+            print(f"  {k:25s}: {v}")
+
+    if messages:
+        print(f"\n=== Sample Messages (first {args.limit}) ===")
+        for msg in messages[:args.limit]:
+            method_short = msg.get("method", "?").replace("Webcast", "").replace("Message", "")
+            nickname = msg.get("nickname") or "-"
+            content = msg.get("content", "")
+            gift = f"  [礼物:{msg['gift_name']}x{msg['gift_count']}]" if msg.get("gift_name") else ""
+            online = f"  [在线:{msg['online_count']}]" if msg.get("online_count") else ""
+            print(f"  [{method_short:15s}] {nickname:12s}: {content[:80]}{gift}{online}")
+
     # Output to file if specified
     if args.output:
         output_path = Path(args.output)
-        
-        if args.format == "summary":
-            # Save summary only
-            summary = {
-                "total_frames": results['total_frames'],
-                "stats": results['stats'],
-                "messages": results['messages'],
-            }
-            with open(output_path, 'w') as f:
-                json.dump(summary, f, indent=2, ensure_ascii=False)
-        else:
-            # Save full results
-            with open(output_path, 'w') as f:
+        with open(output_path, "w", encoding="utf-8") as f:
+            if args.format == "summary":
+                json.dump({"stats": stats, "messages": messages}, f, indent=2, ensure_ascii=False)
+            else:
                 json.dump(results, f, indent=2, ensure_ascii=False)
-                
         print(f"\nResults saved to: {output_path}")
-        
+
     return 0
 
 
