@@ -46,6 +46,7 @@ class HttpDouyinLiveStatusCollector(DouyinLiveStatusCollector):
             response.raise_for_status()
 
         page_state = self._extract_page_state(response.text)
+        script_metadata = self._extract_room_script_metadata(response.text)
         room_store = page_state.get("roomStore", {})
         room_info = room_store.get("roomInfo", {})
         web_rid = self._normalize_text(room_info.get("web_rid") or room_info.get("roomId"))
@@ -54,6 +55,34 @@ class HttpDouyinLiveStatusCollector(DouyinLiveStatusCollector):
             raise DouyinRoomDataUnavailable(
                 f"Could not extract roomStore data from room page {response.url} for room {room.room_id}."
             )
+
+        # Douyin live pages sometimes expose a lightweight "liveStatus" marker even when the room is not live.
+        # Prefer stronger signals (stream URL or room status code embedded in the HTML) to avoid false positives.
+        room_status_code = self._extract_int(script_metadata.get("room_status")) if script_metadata else None
+        has_stream_url = bool(
+            room_info.get("web_stream_url") or room_info.get("stream_url") or room_info.get("streamUrl")
+        )
+        resolved_room_id = (
+            self._normalize_text(script_metadata.get("room_id")) if script_metadata else None
+        ) or web_rid or room.room_id
+        resolved_title = (
+            self._normalize_text(script_metadata.get("room_title")) if script_metadata else None
+        ) or self._normalize_text(room_info.get("title")) or room.live_title
+
+        resolved_live_status = live_status or "unknown"
+        if room_status_code is not None:
+            # Convention used by many public spiders: 2 = live, 4 = offline.
+            if room_status_code == 2:
+                resolved_live_status = "live"
+            elif room_status_code == 4:
+                resolved_live_status = "offline"
+
+        if room_status_code is not None:
+            is_live = room_status_code == 2
+        elif has_stream_url:
+            is_live = True
+        else:
+            is_live = resolved_live_status in {"live", "online"}
 
         raw_payload = {
             "collector": "http-page",
@@ -70,17 +99,16 @@ class HttpDouyinLiveStatusCollector(DouyinLiveStatusCollector):
                 "has_cookies": bool(request_context.cookies),
             },
             "page_state": page_state,
+            "script_metadata": script_metadata,
         }
-        resolved_live_status = live_status or "unknown"
-        resolved_room_id = web_rid or room.room_id
         return LiveRoomStatus(
             room_id=resolved_room_id,
             fetched_at=now,
             live_status=resolved_live_status,
-            is_live=resolved_live_status == "normal" and web_rid is not None,
+            is_live=is_live,
             account_id=room.account_id,
             nickname=self._extract_nickname(page_state) or room.nickname,
-            live_title=self._normalize_text(room_info.get("title")) or room.live_title,
+            live_title=resolved_title,
             source_url=str(response.url),
             online_count=self._extract_int(room_info.get("user_count")),
             total_viewer_count=self._extract_int(room_info.get("total_user_count")),
@@ -356,6 +384,62 @@ class HttpDouyinLiveStatusCollector(DouyinLiveStatusCollector):
             )
         if odin is not None:
             result["odin"] = odin
+        return result
+
+    def _extract_room_script_metadata(self, html: str) -> dict[str, str] | None:
+        """Best-effort extraction of room metadata embedded in inline scripts.
+
+        This is a stability fallback inspired by public projects such as DouYin_Spider. Douyin's room pages can expose
+        a room status code and title even when signed API calls are blocked; we use it to reduce false positives.
+        """
+
+        def first_match(patterns: list[str]) -> str | None:
+            for pattern in patterns:
+                match = re.search(pattern, html)
+                if match:
+                    value = match.group(1)
+                    if value:
+                        return value
+            return None
+
+        room_id = first_match(
+            [
+                r'\\"roomId\\":\\"(\\d+)\\"',
+                r'"roomId":"(\\d+)"',
+                r'\\"web_rid\\":\\"(\\d+)\\"',
+                r'"web_rid":"(\\d+)"',
+            ]
+        )
+        user_unique_id = first_match(
+            [
+                r'\\"user_unique_id\\":\\"(\\d+)\\"',
+                r'"user_unique_id":"(\\d+)"',
+            ]
+        )
+        room_status = None
+        room_title = None
+
+        # Mirrors a common bootstrap blob: roomInfo -> room -> status/title
+        match = re.search(
+            r'\\"roomInfo\\":\\{\\\\"room\\\\":\\{\\\\"id_str\\\\":\\\\".*?\\",\\\\"status\\\\":(\\d+?),\\\\"status_str\\\\":\\\\".*?\\",\\\\"title\\\\":\\\\"(.*?)\\\\"',
+            html,
+        )
+        if match:
+            room_status = match.group(1)
+            room_title = match.group(2)
+
+        if room_id is None and user_unique_id is None and room_status is None and room_title is None:
+            return None
+
+        result: dict[str, str] = {}
+        if room_id is not None:
+            result["room_id"] = room_id
+        if user_unique_id is not None:
+            result["user_unique_id"] = user_unique_id
+        if room_status is not None:
+            result["room_status"] = room_status
+        if room_title is not None:
+            result["room_title"] = room_title
         return result
 
     def _extract_escaped_json_between(
