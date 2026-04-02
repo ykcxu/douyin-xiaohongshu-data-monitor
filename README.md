@@ -84,6 +84,12 @@ py -3 -m app.cli.probe_douyin_signed_api --account-id douyin_demo --room-id 7044
 py -3 -m app.cli.trace_douyin_page_runtime --account-id douyin_demo --room-id 7044145585217083655 --wait-seconds 15
 ```
 
+如果要把 trace 里的 `frontier-pc/frontier-im` WebSocket 握手参数单独拆出来，可以直接跑：
+
+```bash
+py -3 -m app.cli.extract_douyin_frontier_ws --input data/raw/douyin/request-trace/douyin_demo-20260402T053837Z.jsonl
+```
+
 ## 数据库迁移
 
 ```bash
