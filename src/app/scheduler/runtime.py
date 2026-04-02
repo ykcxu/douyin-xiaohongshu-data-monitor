@@ -40,3 +40,6 @@ class SchedulerRuntime:
     def shutdown(self) -> None:
         if self.scheduler.running:
             self.scheduler.shutdown(wait=False)
+
+
+scheduler_runtime = SchedulerRuntime()
