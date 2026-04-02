@@ -411,8 +411,8 @@ def analyze_websocket_trace(trace_file: str) -> dict[str, Any]:
             frame_b64 = None
 
             if ev_type in ("cdp_websocket_frame_received", "cdp_websocket_frame_sent"):
-                # 本项目 trace 格式：payload_preview 字段
-                frame_b64 = event.get("payload_preview") or event.get("response", {}).get("data")
+                # 优先使用完整 payload_data，兼容旧 trace 的 payload_preview 字段
+                frame_b64 = event.get("payload_data") or event.get("payload_preview") or event.get("response", {}).get("data")
                 # 只处理二进制帧（opcode=2），忽略文本控制帧
                 if event.get("opcode") not in (None, 2):
                     continue

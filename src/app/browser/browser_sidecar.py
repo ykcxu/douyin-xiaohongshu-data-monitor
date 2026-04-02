@@ -328,20 +328,24 @@ class BrowserSidecar:
                 if request_id and request_id not in session.ws_request_ids:
                     session.ws_request_ids.add(request_id)
                 opcode = event.get("opcode")
-                payload = str(event.get("payload_preview") or "")
+                payload_full = str(event.get("payload_data") or "")
+                payload_preview = str(event.get("payload_preview") or payload_full[:5000])
+                payload = payload_full or payload_preview
                 item: dict[str, Any] = {
                     "timestamp": event.get("ts") or datetime.now(timezone.utc).isoformat(),
                     "direction": "received" if event_name.endswith("received") else "sent",
                     "opcode": opcode,
                     "request_id": request_id,
                     "url": session.ws_request_urls.get(request_id, ""),
+                    "payload_length": event.get("payload_length"),
                 }
                 if opcode == 2 and payload:
                     item["is_binary"] = True
                     item["data_b64"] = payload
+                    item["data_b64_preview"] = payload_preview
                 else:
                     item["is_binary"] = False
-                    item["text"] = payload
+                    item["text"] = payload_preview
                 session.websocket_frames.append(item)
                 if len(session.websocket_frames) > 1000:
                     session.websocket_frames = session.websocket_frames[-1000:]

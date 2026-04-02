@@ -38,25 +38,31 @@ def attach_cdp_websocket_trace(
 
     def on_websocket_frame_received(params: dict[str, Any]) -> None:
         response_payload = params.get("response", {})
+        payload_data = str(response_payload.get("payloadData", ""))
         emit(
             {
                 "event": "cdp_websocket_frame_received",
                 "ts": iso_now(),
                 "request_id": params.get("requestId"),
                 "opcode": response_payload.get("opcode"),
-                "payload_preview": str(response_payload.get("payloadData", ""))[:5000],
+                "payload_length": len(payload_data),
+                "payload_preview": payload_data[:5000],
+                "payload_data": payload_data,
             }
         )
 
     def on_websocket_frame_sent(params: dict[str, Any]) -> None:
         response_payload = params.get("response", {})
+        payload_data = str(response_payload.get("payloadData", ""))
         emit(
             {
                 "event": "cdp_websocket_frame_sent",
                 "ts": iso_now(),
                 "request_id": params.get("requestId"),
                 "opcode": response_payload.get("opcode"),
-                "payload_preview": str(response_payload.get("payloadData", ""))[:5000],
+                "payload_length": len(payload_data),
+                "payload_preview": payload_data[:5000],
+                "payload_data": payload_data,
             }
         )
 
