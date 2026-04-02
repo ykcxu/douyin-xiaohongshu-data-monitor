@@ -90,6 +90,12 @@ py -3 -m app.cli.trace_douyin_page_runtime --account-id douyin_demo --room-id 70
 py -3 -m app.cli.extract_douyin_frontier_ws --input data/raw/douyin/request-trace/douyin_demo-20260402T053837Z.jsonl
 ```
 
+如果要继续把 `frontier` 的 frame 预览做二进制检查，可以直接跑：
+
+```bash
+py -3 -m app.cli.inspect_douyin_frontier_frames --input data/raw/douyin/request-trace/douyin_demo-20260402T053837Z.frontier.json
+```
+
 ## 数据库迁移
 
 ```bash
