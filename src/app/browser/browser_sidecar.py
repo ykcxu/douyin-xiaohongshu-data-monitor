@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+import base64
 import json
 import threading
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 from playwright.sync_api import Browser, BrowserContext, Page, Playwright, sync_playwright
 
@@ -22,11 +23,11 @@ class RoomWatchSession:
     page: Page | None = None
     last_status: dict[str, Any] = field(default_factory=dict)
     last_update: datetime | None = None
-    websocket_frames: list[dict] = field(default_factory=list)
+    websocket_frames: list[dict[str, Any]] = field(default_factory=list)
     is_active: bool = True
 
 
-@dataclass  
+@dataclass
 class BrowserContextPoolEntry:
     """Manages a persistent browser context for an account."""
     account_id: str
@@ -38,12 +39,8 @@ class BrowserContextPoolEntry:
 
 
 class BrowserSidecar:
-    """Long-running browser sidecar for efficient live room monitoring.
-    
-    This class maintains persistent browser contexts to avoid the overhead
-    of launching new browsers for each room check.
-    """
-    
+    """Long-running browser sidecar for efficient live room monitoring."""
+
     def __init__(
         self,
         headless: bool = True,
@@ -55,7 +52,7 @@ class BrowserSidecar:
         self.headless = headless
         self.context_ttl_seconds = context_ttl_seconds
         self.max_contexts = max_contexts
-        
+
         self._playwright: Playwright | None = None
         self._browser: Browser | None = None
         self._contexts: dict[str, BrowserContextPoolEntry] = {}
@@ -63,99 +60,80 @@ class BrowserSidecar:
         self._lock = threading.RLock()
         self._running = False
         self._cleanup_thread: threading.Thread | None = None
-        
+
     def start(self) -> None:
-        """Start the sidecar and background maintenance threads."""
         with self._lock:
             if self._running:
                 return
-            
             self._playwright = sync_playwright().start()
             self._browser = self._playwright.chromium.launch(headless=self.headless)
             self._running = True
-            
-        # Start cleanup thread
+
         self._cleanup_thread = threading.Thread(target=self._cleanup_loop, daemon=True)
         self._cleanup_thread.start()
-        
+
     def stop(self) -> None:
-        """Stop the sidecar and cleanup resources."""
         with self._lock:
             self._running = False
-            
-            # Close all contexts
+
             for entry in self._contexts.values():
                 if entry.context:
                     entry.context.close()
             self._contexts.clear()
-            
-            # Close browser
+            self._rooms.clear()
+
             if self._browser:
                 self._browser.close()
                 self._browser = None
-                
-            # Stop playwright
+
             if self._playwright:
                 self._playwright.stop()
                 self._playwright = None
-                
+
     def _cleanup_loop(self) -> None:
-        """Background thread to cleanup stale contexts."""
         while self._running:
-            time.sleep(60)  # Check every minute
+            time.sleep(60)
             self._cleanup_stale_contexts()
-            
+
     def _cleanup_stale_contexts(self) -> None:
-        """Remove contexts that haven't been used recently."""
         with self._lock:
             now = datetime.now(timezone.utc)
-            stale_accounts = []
-            
-            for account_id, entry in self._contexts.items():
+            stale_keys: list[str] = []
+            for key, entry in self._contexts.items():
                 age = (now - entry.last_used).total_seconds()
                 if age > self.context_ttl_seconds:
-                    stale_accounts.append(account_id)
-                    
-            for account_id in stale_accounts:
-                entry = self._contexts.pop(account_id)
+                    stale_keys.append(key)
+            for key in stale_keys:
+                entry = self._contexts.pop(key)
                 if entry.context:
                     entry.context.close()
-                    
+
     def _get_or_create_context(self, platform: str, account_id: str) -> BrowserContext:
-        """Get existing context or create new one for account."""
         with self._lock:
             key = f"{platform}:{account_id}"
-            
-            # Check if context exists and is valid
             if key in self._contexts:
                 entry = self._contexts[key]
                 if entry.is_valid and entry.context:
                     entry.last_used = datetime.now(timezone.utc)
                     return entry.context
-                    
-            # Check context limit
+
             if len(self._contexts) >= self.max_contexts:
-                # Remove oldest context
-                oldest_key = min(
-                    self._contexts.keys(),
-                    key=lambda k: self._contexts[k].last_used
-                )
+                oldest_key = min(self._contexts.keys(), key=lambda k: self._contexts[k].last_used)
                 oldest_entry = self._contexts.pop(oldest_key)
                 if oldest_entry.context:
                     oldest_entry.context.close()
-                    
-            # Create new context
+
             storage_state_path = self.login_state_service.resolve_storage_state_path(
                 platform=platform,
                 account_id=account_id,
             )
-            
-            context_options = {}
+            context_options: dict[str, Any] = {}
             if storage_state_path and Path(storage_state_path).exists():
                 context_options["storage_state"] = str(storage_state_path)
-                
+
+            if self._browser is None:
+                raise RuntimeError("BrowserSidecar has not been started")
             context = self._browser.new_context(**context_options)
-            
             entry = BrowserContextPoolEntry(
                 account_id=account_id,
                 platform=platform,
@@ -163,7 +141,7 @@ class BrowserSidecar:
             )
             self._contexts[key] = entry
             return context
-            
+
     def watch_room(
         self,
         room_id: str,
@@ -171,80 +149,95 @@ class BrowserSidecar:
         platform: str = "douyin",
         room_url: str | None = None,
     ) -> RoomWatchSession:
-        """Start watching a room and return session."""
         with self._lock:
             if room_id in self._rooms:
                 return self._rooms[room_id]
-                
-            session = RoomWatchSession(
-                room_id=room_id,
-                account_id=account_id,
-            )
-            
-            # Get or create context
+
+            session = RoomWatchSession(room_id=room_id, account_id=account_id)
             context = self._get_or_create_context(platform, account_id)
-            
-            # Create new page for room
             page = context.new_page()
-            
+
+            self._setup_websocket_monitoring(session, page)
+
             url = room_url or f"https://live.douyin.com/{room_id}"
             page.goto(url, wait_until="domcontentloaded", timeout=30000)
             page.wait_for_timeout(3000)
-            
+
             session.page = page
             session.last_update = datetime.now(timezone.utc)
-            
-            # Setup WebSocket monitoring
-            self._setup_websocket_monitoring(session, page)
-            
             self._rooms[room_id] = session
             return session
-            
+
     def _setup_websocket_monitoring(self, session: RoomWatchSession, page: Page) -> None:
-        """Setup listeners for WebSocket traffic."""
-        def handle_ws(ws):
-            # Check if this is the frontier/im WebSocket
+        def handle_ws(ws) -> None:
             if "frontier" in ws.url or "/webcast/im/" in ws.url:
                 ws.on("framereceived", lambda frame: self._on_ws_frame(session, frame, "received"))
                 ws.on("framesent", lambda frame: self._on_ws_frame(session, frame, "sent"))
-                
+
         page.on("websocket", handle_ws)
-        
+
     def _on_ws_frame(self, session: RoomWatchSession, frame: Any, direction: str) -> None:
-        """Handle incoming/outgoing WebSocket frames."""
         try:
-            frame_data = {
+            item: dict[str, Any] = {
                 "timestamp": datetime.now(timezone.utc).isoformat(),
                 "direction": direction,
-                "data": frame,
             }
-            session.websocket_frames.append(frame_data)
-            
-            # Keep only last 1000 frames
+            if isinstance(frame, (bytes, bytearray)):
+                item["is_binary"] = True
+                item["data_b64"] = base64.b64encode(bytes(frame)).decode("ascii")
+            elif isinstance(frame, str):
+                item["is_binary"] = False
+                item["text"] = frame
+            elif isinstance(frame, dict):
+                opcode = frame.get("opcode")
+                payload = frame.get("payload")
+                item["opcode"] = opcode
+                if isinstance(payload, (bytes, bytearray)):
+                    item["is_binary"] = True
+                    item["data_b64"] = base64.b64encode(bytes(payload)).decode("ascii")
+                elif isinstance(payload, str):
+                    item["is_binary"] = opcode == 2
+                    if opcode == 2:
+                        item["data_b64"] = payload
+                    else:
+                        item["text"] = payload
+                else:
+                    item["repr"] = repr(frame)
+            else:
+                item["repr"] = repr(frame)
+
+            session.websocket_frames.append(item)
             if len(session.websocket_frames) > 1000:
                 session.websocket_frames = session.websocket_frames[-1000:]
         except Exception:
             pass
-            
-    def get_room_status(self, room_id: str) -> dict[str, Any] | None:
-        """Get current status of a watched room."""
+
+    def get_websocket_frames(
+        self,
+        room_id: str,
+        *,
+        since: int = 0,
+        direction: str | None = None,
+    ) -> tuple[list[dict[str, Any]], int]:
         with self._lock:
-            if room_id not in self._rooms:
+            session = self._rooms.get(room_id)
+            if session is None:
+                return [], since
+            frames = session.websocket_frames[since:]
+            if direction is not None:
+                frames = [f for f in frames if f.get("direction") == direction]
+            return frames, len(session.websocket_frames)
+
+    def get_room_status(self, room_id: str) -> dict[str, Any] | None:
+        with self._lock:
+            session = self._rooms.get(room_id)
+            if session is None or session.page is None:
                 return None
-                
-            session = self._rooms[room_id]
-            if not session.page:
-                return None
-                
             try:
                 html = session.page.content()
-                
-                # Extract room state from page
                 page_state = self._extract_page_state(html)
-                
                 session.last_status = page_state
                 session.last_update = datetime.now(timezone.utc)
-                
                 return {
                     "room_id": room_id,
                     "status": page_state,
@@ -253,64 +246,50 @@ class BrowserSidecar:
                 }
             except Exception as e:
                 return {"error": str(e), "room_id": room_id}
-                
+
     def refresh_room(self, room_id: str) -> bool:
-        """Refresh the room page."""
         with self._lock:
-            if room_id not in self._rooms:
+            session = self._rooms.get(room_id)
+            if session is None or session.page is None:
                 return False
-                
-            session = self._rooms[room_id]
-            if session.page:
-                try:
-                    session.page.reload(wait_until="domcontentloaded", timeout=30000)
-                    session.page.wait_for_timeout(3000)
-                    session.last_update = datetime.now(timezone.utc)
-                    return True
-                except Exception:
-                    session.is_active = False
-                    return False
-            return False
-            
+            try:
+                session.page.reload(wait_until="domcontentloaded", timeout=30000)
+                session.page.wait_for_timeout(3000)
+                session.last_update = datetime.now(timezone.utc)
+                return True
+            except Exception:
+                session.is_active = False
+                return False
+
     def stop_watching(self, room_id: str) -> bool:
-        """Stop watching a room."""
         with self._lock:
-            if room_id not in self._rooms:
+            session = self._rooms.pop(room_id, None)
+            if session is None:
                 return False
-                
-            session = self._rooms.pop(room_id)
             if session.page:
                 session.page.close()
             return True
-            
+
     def _extract_page_state(self, html: str) -> dict[str, Any]:
-        """Extract room state from HTML."""
         import re
-        import json
-        
-        result = {}
-        
-        # Try to find roomStore
+
+        result: dict[str, Any] = {}
         patterns = [
-            (r'"roomStore":({.*?}),"linkmicStore":', 'roomStore'),
-            (r'\\"roomStore\\":({.*?}),\\"linkmicStore\\":', 'roomStore'),
+            (r'"roomStore":({.*?}),"linkmicStore":', "roomStore"),
+            (r'\\"roomStore\\":({.*?}),\\"linkmicStore\\":', "roomStore"),
         ]
-        
         for pattern, key in patterns:
             matches = re.findall(pattern, html, re.DOTALL)
             for match in matches:
                 try:
                     normalized = match.replace('\\"', '"')
-                    data = json.loads(normalized)
-                    result[key] = data
+                    result[key] = json.loads(normalized)
                     break
                 except json.JSONDecodeError:
                     continue
-                    
         return result
-        
+
     def get_stats(self) -> dict[str, Any]:
-        """Get sidecar statistics."""
         with self._lock:
             return {
                 "running": self._running,
@@ -338,25 +317,23 @@ class BrowserSidecar:
             }
 
 
-# Global sidecar instance
 _sidecar_instance: BrowserSidecar | None = None
 _sidecar_lock = threading.Lock()
 
 
 def get_browser_sidecar() -> BrowserSidecar:
-    """Get or create global browser sidecar instance."""
     global _sidecar_instance
     with _sidecar_lock:
         if _sidecar_instance is None:
-            _sidecar_instance = BrowserSidecar(headless=True)
+            settings = get_settings()
+            _sidecar_instance = BrowserSidecar(headless=settings.douyin_browser_headless)
             _sidecar_instance.start()
         return _sidecar_instance
 
 
 def shutdown_browser_sidecar() -> None:
-    """Shutdown global browser sidecar."""
     global _sidecar_instance
     with _sidecar_lock:
-        if _sidecar_instance:
+        if _sidecar_instance is not None:
             _sidecar_instance.stop()
             _sidecar_instance = None

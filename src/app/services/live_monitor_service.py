@@ -100,8 +100,11 @@ class LiveMonitorService:
                     active_session = self._open_session(session, room, status)
                 room.last_live_start_time = status.fetched_at
                 self._create_snapshot(session, room, active_session, status)
+                self._ensure_sidecar_watch(room)
+                self._ingest_sidecar_messages(room, active_session)
             elif active_session is not None:
                 self._close_session(session, room, active_session, status.fetched_at)
+                self._stop_sidecar_watch(room.room_id)
 
             room.updated_at = datetime.now(timezone.utc)
             session.flush()
@@ -112,6 +115,103 @@ class LiveMonitorService:
                 "live_count": live_count,
                 "live_status": status.live_status,
             }
+
+    def _ensure_sidecar_watch(self, room: DouyinLiveRoom) -> None:
+        try:
+            if not room.account_id:
+                return
+            self.browser_sidecar.watch_room(
+                room_id=room.room_id,
+                account_id=room.account_id,
+                platform="douyin",
+                room_url=room.room_url,
+            )
+        except Exception:
+            # 深采集失败不影响状态扫描主链路
+            return
+
+    def _stop_sidecar_watch(self, room_id: str) -> None:
+        self._room_frame_cursors.pop(room_id, None)
+        try:
+            self.browser_sidecar.stop_watching(room_id)
+        except Exception:
+            pass
+
+    def _ingest_sidecar_messages(self, room: DouyinLiveRoom, live_session: DouyinLiveSession) -> None:
+        cursor = self._room_frame_cursors.get(room.room_id, 0)
+        try:
+            frames, next_cursor = self.browser_sidecar.get_websocket_frames(
+                room.room_id,
+                since=cursor,
+                direction="received",
+            )
+        except Exception:
+            return
+        self._room_frame_cursors[room.room_id] = next_cursor
+
+        for frame in frames:
+            if not frame.get("is_binary"):
+                continue
+            data_b64 = frame.get("data_b64")
+            if not data_b64:
+                continue
+            try:
+                decoded = self.ws_decoder.decode_frame_base64(str(data_b64))
+            except Exception:
+                continue
+            for msg in decoded.messages:
+                if msg.method not in {
+                    "WebcastChatMessage",
+                    "WebcastMemberMessage",
+                    "WebcastGiftMessage",
+                    "WebcastLikeMessage",
+                    "WebcastSocialMessage",
+                }:
+                    continue
+                payload = {
+                    "message_id": str(msg.msg_id or f"{live_session.session_no}-{msg.method}-{frame.get('timestamp')}-{msg.user_id}"),
+                    "message_type": msg.method.replace("Webcast", "").replace("Message", "").lower(),
+                    "event_time": self._millis_to_iso(msg.timestamp) or frame.get("timestamp"),
+                    "fetch_time": frame.get("timestamp") or datetime.now(timezone.utc).isoformat(),
+                    "user_id": str(msg.user_id) if msg.user_id else None,
+                    "nickname": msg.nickname or None,
+                    "display_name": msg.nickname or None,
+                    "content": msg.content or self._build_message_content(msg),
+                    "content_plain": msg.content or self._build_message_content(msg),
+                    "raw_json": msg.raw or {
+                        "method": msg.method,
+                        "gift_id": msg.gift_id,
+                        "gift_name": msg.gift_name,
+                        "gift_count": msg.gift_count,
+                        "like_count": msg.like_count,
+                        "online_count": msg.online_count,
+                    },
+                }
+                try:
+                    self.record_comment(
+                        session_id=live_session.id,
+                        live_room_id=room.id,
+                        room_id=live_session.room_id,
+                        session_no=live_session.session_no,
+                        comment_payload=payload,
+                    )
+                except Exception:
+                    continue
+
+    def _build_message_content(self, msg) -> str:
+        if msg.gift_name:
+            return f"{msg.nickname or '用户'} 送出 {msg.gift_name} x{msg.gift_count or 1}"
+        if msg.like_count:
+            return f"{msg.nickname or '用户'} 点赞 {msg.like_count}"
+        return msg.content or msg.method
+
+    def _millis_to_iso(self, value: int | None) -> str | None:
+        if not value:
+            return None
+        try:
+            return datetime.fromtimestamp(value / 1000, tz=timezone.utc).isoformat()
+        except Exception:
+            return None
 
     def _get_active_session(self, session, live_room_id: int) -> DouyinLiveSession | None:
         stmt = (
