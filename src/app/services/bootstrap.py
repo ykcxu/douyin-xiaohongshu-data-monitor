@@ -1,9 +1,7 @@
-from app.db.base import Base
-from app.db.session import engine
-from app.models import BrowserLoginState, PlatformAccount
+from app.config.settings import get_settings
 
 
 def init_db() -> None:
-    # Importing models above ensures metadata is populated before create_all.
-    _ = (BrowserLoginState, PlatformAccount)
-    Base.metadata.create_all(bind=engine)
+    settings = get_settings()
+    settings.browser_state_dir.mkdir(parents=True, exist_ok=True)
+    settings.raw_data_dir.mkdir(parents=True, exist_ok=True)

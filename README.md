@@ -27,6 +27,7 @@ runtime/ 本地运行时数据
 ```bash
 copy .env.example .env
 py -3 -m pip install -e .
+py -3 -m alembic upgrade head
 py -3 src/main.py
 ```
 
@@ -35,4 +36,11 @@ py -3 src/main.py
 ```bash
 cp .env.example .env
 docker compose up --build
+```
+
+## 数据库迁移
+
+```bash
+py -3 -m alembic upgrade head
+py -3 -m alembic revision -m "describe change"
 ```
