@@ -50,14 +50,20 @@ class LiveMonitorService:
             result = self.ws_decoder.decode_frame_base64(str(frame["data_b64"]))
             decoded_items.append({
                 "timestamp": frame.get("timestamp"),
+                "request_id": frame.get("request_id"),
+                "url": frame.get("url"),
+                "opcode": frame.get("opcode"),
                 "error": result.error,
                 "message_count": len(result.messages),
                 "methods": [m.method for m in result.messages[:20]],
             })
+        stats = self._get_sidecar().get_stats()
+        room_stats = next((x for x in stats.get("rooms", []) if x.get("room_id") == room_id), {})
         return {
             "room_id": room_id,
             "total_frames": len(frames),
             "cursor": cursor,
+            "ws_urls": room_stats.get("ws_urls", []),
             "decoded_samples": decoded_items,
         }
 

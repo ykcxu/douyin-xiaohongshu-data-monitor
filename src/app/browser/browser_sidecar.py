@@ -21,6 +21,9 @@ class RoomWatchSession:
     room_id: str
     account_id: str
     page: Page | None = None
+    cdp_session: Any | None = None
+    ws_request_ids: set[str] = field(default_factory=set)
+    ws_request_urls: dict[str, str] = field(default_factory=dict)
     last_status: dict[str, Any] = field(default_factory=dict)
     last_update: datetime | None = None
     websocket_frames: list[dict[str, Any]] = field(default_factory=list)
@@ -91,9 +94,13 @@ class BrowserSidecar:
                 self._playwright = None
 
     def _cleanup_loop(self) -> None:
+        tick = 0
         while self._running:
-            time.sleep(60)
-            self._cleanup_stale_contexts()
+            time.sleep(1)
+            tick += 1
+            self._pump_room_events()
+            if tick % 60 == 0:
+                self._cleanup_stale_contexts()
 
     def _cleanup_stale_contexts(self) -> None:
         with self._lock:
@@ -107,6 +114,19 @@ class BrowserSidecar:
                 entry = self._contexts.pop(key)
                 if entry.context:
                     entry.context.close()
+
+    def _pump_room_events(self) -> None:
+        with self._lock:
+            sessions = list(self._rooms.values())
+        for session in sessions:
+            page = session.page
+            if page is None or not session.is_active:
+                continue
+            try:
+                page.wait_for_timeout(50)
+                session.last_update = datetime.now(timezone.utc)
+            except Exception:
+                session.is_active = False
 
     def _get_or_create_context(self, platform: str, account_id: str) -> BrowserContext:
         with self._lock:
@@ -176,48 +196,42 @@ class BrowserSidecar:
         if cdp is None:
             return
 
-        def on_websocket_created(params: dict[str, Any]) -> None:
-            request_id = params.get("requestId")
-            if request_id:
-                session.ws_request_ids.add(str(request_id))
+        def emit(event: dict[str, object]) -> None:
+            try:
+                event_name = str(event.get("event") or "")
+                request_id = str(event.get("request_id") or "")
+                if event_name == "cdp_websocket_created":
+                    if request_id:
+                        session.ws_request_ids.add(request_id)
+                        session.ws_request_urls[request_id] = str(event.get("url") or "")
+                    return
 
-        def on_websocket_frame_received(params: dict[str, Any]) -> None:
-            if str(params.get("requestId") or "") not in session.ws_request_ids:
-                return
-            response_payload = params.get("response", {})
-            self._on_cdp_ws_frame(session, response_payload, "received")
+                if event_name not in {"cdp_websocket_frame_received", "cdp_websocket_frame_sent"}:
+                    return
+                if request_id and request_id not in session.ws_request_ids:
+                    session.ws_request_ids.add(request_id)
+                opcode = event.get("opcode")
+                payload = str(event.get("payload_preview") or "")
+                item: dict[str, Any] = {
+                    "timestamp": event.get("ts") or datetime.now(timezone.utc).isoformat(),
+                    "direction": "received" if event_name.endswith("received") else "sent",
+                    "opcode": opcode,
+                    "request_id": request_id,
+                    "url": session.ws_request_urls.get(request_id, ""),
+                }
+                if opcode == 2 and payload:
+                    item["is_binary"] = True
+                    item["data_b64"] = payload
+                else:
+                    item["is_binary"] = False
+                    item["text"] = payload
+                session.websocket_frames.append(item)
+                if len(session.websocket_frames) > 1000:
+                    session.websocket_frames = session.websocket_frames[-1000:]
+            except Exception:
+                pass
 
-        def on_websocket_frame_sent(params: dict[str, Any]) -> None:
-            if str(params.get("requestId") or "") not in session.ws_request_ids:
-                return
-            response_payload = params.get("response", {})
-            self._on_cdp_ws_frame(session, response_payload, "sent")
-
-        cdp.on("Network.webSocketCreated", on_websocket_created)
-        cdp.on("Network.webSocketFrameReceived", on_websocket_frame_received)
-        cdp.on("Network.webSocketFrameSent", on_websocket_frame_sent)
-
-    def _on_cdp_ws_frame(self, session: RoomWatchSession, frame: dict[str, Any], direction: str) -> None:
-        try:
-            opcode = frame.get("opcode")
-            payload = frame.get("payloadData")
-            item: dict[str, Any] = {
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-                "direction": direction,
-                "opcode": opcode,
-            }
-            if opcode == 2 and payload:
-                item["is_binary"] = True
-                item["data_b64"] = str(payload)
-            else:
-                item["is_binary"] = False
-                item["text"] = str(payload or "")
-
-            session.websocket_frames.append(item)
-            if len(session.websocket_frames) > 1000:
-                session.websocket_frames = session.websocket_frames[-1000:]
-        except Exception:
-            pass
+        attach_cdp_websocket_trace(cdp, emit=emit)
 
     def get_websocket_frames(
         self,
@@ -340,6 +354,8 @@ class BrowserSidecar:
                         "is_active": session.is_active,
                         "last_update": session.last_update.isoformat() if session.last_update else None,
                         "websocket_frames": len(session.websocket_frames),
+                        "ws_request_ids": len(session.ws_request_ids),
+                        "ws_urls": list(session.ws_request_urls.values())[:10],
                     }
                     for session in self._rooms.values()
                 ],

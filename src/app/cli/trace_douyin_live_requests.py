@@ -8,6 +8,7 @@ from typing import Any
 
 from playwright.sync_api import sync_playwright
 
+from app.browser.cdp_websocket_trace import attach_cdp_websocket_trace, iso_now, normalize_headers
 from app.browser.login_manager import BrowserLoginManager
 from app.config.settings import get_settings
 
@@ -38,12 +39,6 @@ def append_jsonl(path: Path, payload: dict[str, object]) -> None:
         handle.write(json.dumps(payload, ensure_ascii=False) + "\n")
 
 
-def normalize_headers(headers: Any) -> dict[str, str]:
-    if isinstance(headers, dict):
-        return {str(key): str(value) for key, value in headers.items()}
-    return {}
-
-
 def main() -> int:
     parser = build_parser()
     args = parser.parse_args()
@@ -66,26 +61,27 @@ def main() -> int:
         context = browser.new_context(storage_state=str(state_file))
         page = context.new_page()
         cdp_session = context.new_cdp_session(page)
-        cdp_session.send("Network.enable")
+
+        def emit(payload: dict[str, object]) -> None:
+            append_jsonl(output_path, payload)
 
         def on_request(request) -> None:
-            append_jsonl(
-                output_path,
+            emit(
                 {
                     "event": "request",
-                    "ts": datetime.now(timezone.utc).isoformat(),
+                    "ts": iso_now(),
                     "method": request.method,
                     "resource_type": request.resource_type,
                     "url": request.url,
                     "headers": request.headers,
-                },
+                }
             )
 
         def on_response(response) -> None:
             request = response.request
             payload = {
                 "event": "response",
-                "ts": datetime.now(timezone.utc).isoformat(),
+                "ts": iso_now(),
                 "method": request.method,
                 "resource_type": request.resource_type,
                 "url": response.url,
@@ -99,74 +95,32 @@ def main() -> int:
                     payload["body_preview"] = None
             except BaseException:
                 payload["body_preview"] = None
-            append_jsonl(output_path, payload)
+            emit(payload)
 
         def on_websocket(websocket) -> None:
-            append_jsonl(
-                output_path,
+            emit(
                 {
                     "event": "websocket",
-                    "ts": datetime.now(timezone.utc).isoformat(),
+                    "ts": iso_now(),
                     "url": websocket.url,
-                },
+                }
             )
 
         def on_console(message) -> None:
-            append_jsonl(
-                output_path,
+            emit(
                 {
                     "event": "console",
-                    "ts": datetime.now(timezone.utc).isoformat(),
+                    "ts": iso_now(),
                     "type": message.type,
                     "text": message.text,
-                },
-            )
-
-        def on_websocket_created(params: dict[str, Any]) -> None:
-            append_jsonl(
-                output_path,
-                {
-                    "event": "cdp_websocket_created",
-                    "ts": datetime.now(timezone.utc).isoformat(),
-                    "request_id": params.get("requestId"),
-                    "url": params.get("url"),
-                    "initiator": params.get("initiator"),
-                },
-            )
-
-        def on_websocket_frame_received(params: dict[str, Any]) -> None:
-            response_payload = params.get("response", {})
-            append_jsonl(
-                output_path,
-                {
-                    "event": "cdp_websocket_frame_received",
-                    "ts": datetime.now(timezone.utc).isoformat(),
-                    "request_id": params.get("requestId"),
-                    "opcode": response_payload.get("opcode"),
-                    "payload_preview": str(response_payload.get("payloadData", ""))[:5000],
-                },
-            )
-
-        def on_websocket_frame_sent(params: dict[str, Any]) -> None:
-            response_payload = params.get("response", {})
-            append_jsonl(
-                output_path,
-                {
-                    "event": "cdp_websocket_frame_sent",
-                    "ts": datetime.now(timezone.utc).isoformat(),
-                    "request_id": params.get("requestId"),
-                    "opcode": response_payload.get("opcode"),
-                    "payload_preview": str(response_payload.get("payloadData", ""))[:5000],
-                },
+                }
             )
 
         page.on("request", on_request)
         page.on("response", on_response)
         page.on("websocket", on_websocket)
         page.on("console", on_console)
-        cdp_session.on("Network.webSocketCreated", on_websocket_created)
-        cdp_session.on("Network.webSocketFrameReceived", on_websocket_frame_received)
-        cdp_session.on("Network.webSocketFrameSent", on_websocket_frame_sent)
+        attach_cdp_websocket_trace(cdp_session, emit=emit)
 
         page.goto(args.room_url, wait_until="domcontentloaded")
         try:
