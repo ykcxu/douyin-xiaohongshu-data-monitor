@@ -2,42 +2,53 @@
 
 一个面向抖音与小红书的数据监测项目，用于持续采集直播、账号、视频、笔记、评论、点赞、粉丝等核心指标。
 
-## 当前阶段
+## 当前能力
 
-当前仓库已完成项目初始化，需求与开发设计文档见：
+- 监测账号与抖音直播间管理 API
+- 抖音直播扫描、场次、快照、弹幕查询骨架
+- 弹幕 JSONL 归档入口
+- 小红书账号、笔记、评论的查询与写入骨架
+- Playwright 登录态记录、请求上下文、Provider 工厂
+- Ubuntu 部署脚本、Docker、Alembic 迁移
+- Windows 本地 SQLite 联调支持
 
-- `docs/开发文档.md`
-- `docs/API说明.md`
-- `docs/运行说明.md`
-- `deploy/ubuntu/install_dependencies.sh`
-- `deploy/ubuntu/bootstrap_server.sh`
-- `deploy/ubuntu/DEPLOY.md`
+## 文档入口
 
-## 目录结构
+- [开发文档](docs/开发文档.md)
+- [API说明](docs/API说明.md)
+- [运行说明](docs/运行说明.md)
+- [Ubuntu 部署说明](deploy/ubuntu/DEPLOY.md)
 
-```text
-src/    业务代码
-data/   原始数据与中间产物
-logs/   运行日志
-docs/   项目文档
-deploy/ Ubuntu 部署脚本
-runtime/ 本地运行时数据
-```
-
-## 本地开发
+## Windows 本地联调
 
 ```bash
 copy .env.example .env
 py -3 -m pip install -e .
-py -3 -m alembic upgrade head
-py -3 -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --app-dir src
+py -3 -m playwright install chromium
+py -3 -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --app-dir src
 ```
 
-## Docker 启动
+建议在 `.env` 中设置：
+
+```env
+AUTO_CREATE_SCHEMA=true
+DATABASE_URL=sqlite:///./runtime/app.db
+SCHEDULER_ENABLED=false
+DOUYIN_LIVE_PROVIDER=stub
+```
+
+### 导出抖音登录态
 
 ```bash
-cp .env.example .env
-docker compose up --build
+py -3 -m app.cli.export_douyin_storage_state --account-id douyin_demo --operator admin
+```
+
+系统会打开浏览器。扫码登录完成后，回到终端按 Enter，即可把 `storage_state` 保存到 `runtime/browser` 并写入 `browser_login_state`。
+
+### 检查登录态
+
+```bash
+py -3 -m app.cli.inspect_login_state --account-id douyin_demo
 ```
 
 ## 数据库迁移
@@ -47,12 +58,13 @@ py -3 -m alembic upgrade head
 py -3 -m alembic revision -m "describe change"
 ```
 
-## 当前能力
+## 目录结构
 
-当前已经完成：
-
-- 监测账号与抖音直播间管理接口
-- 抖音直播扫描、场次、快照、弹幕查询骨架
-- 弹幕 JSONL 归档入口
-- 小红书账号、笔记、评论的查询与写入骨架
-- Playwright 登录态记录与请求上下文骨架
+```text
+src/      业务代码
+data/     原始数据与样本
+docs/     项目文档
+deploy/   部署脚本
+runtime/  本地运行时数据
+scripts/  本地调试辅助脚本
+```

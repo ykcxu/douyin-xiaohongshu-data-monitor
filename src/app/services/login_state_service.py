@@ -66,6 +66,7 @@ class LoginStateService:
         platform: str,
         account_id: str,
         storage_state_path: Path,
+        cookie_hash: str | None = None,
         login_type: str = "scan",
         status: str = "valid",
         operator: str | None = None,
@@ -90,6 +91,7 @@ class LoginStateService:
                 session.add(state)
 
             state.storage_state_path = str(storage_state_path)
+            state.cookie_hash = cookie_hash
             state.login_type = login_type
             state.status = status
             state.operator = operator
