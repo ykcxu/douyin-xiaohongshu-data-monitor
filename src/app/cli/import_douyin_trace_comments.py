@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 import argparse
+import json
 from datetime import datetime, timezone
 from pathlib import Path
 
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
 from app.collector.douyin.live.websocket_decoder import analyze_websocket_trace
 from app.db.session import get_db_session
+from app.models.douyin_live_comment import DouyinLiveComment
 from app.models.douyin_live_room import DouyinLiveRoom
 from app.models.douyin_live_session import DouyinLiveSession
 from app.services.live_monitor_service import LiveMonitorService
@@ -45,6 +48,42 @@ def build_content(msg: dict[str, object]) -> str:
     return str(msg.get("method") or "unknown")
 
 
+def is_parse_failure_text(content: str | None) -> bool:
+    text = (content or "").strip()
+    return text.startswith("[解析失败:")
+
+
+def repair_existing_comment(*, message_id: str, payload: dict[str, object]) -> bool:
+    content = str(payload.get("content") or "").strip()
+    nickname = payload.get("nickname")
+    raw_json = payload.get("raw_json")
+
+    with get_db_session() as session:
+        existing = session.execute(
+            select(DouyinLiveComment).where(DouyinLiveComment.message_id == message_id)
+        ).scalar_one_or_none()
+        if existing is None:
+            return False
+
+        should_repair = False
+        if is_parse_failure_text(existing.content) and content and not is_parse_failure_text(content):
+            existing.content = content
+            existing.content_plain = str(payload.get("content_plain") or content)
+            should_repair = True
+
+        if (not existing.nickname) and nickname:
+            existing.nickname = str(nickname)
+            existing.display_name = str(payload.get("display_name") or nickname)
+            should_repair = True
+
+        if should_repair and raw_json and isinstance(raw_json, dict):
+            existing.raw_json = json.dumps(payload, ensure_ascii=False)
+
+        if should_repair:
+            session.add(existing)
+        return should_repair
+
+
 def main() -> int:
     args = build_parser().parse_args()
     input_path = Path(args.input)
@@ -73,6 +112,7 @@ def main() -> int:
     service = LiveMonitorService()
     inserted = 0
     duplicate = 0
+    repaired = 0
     skipped = 0
     failed = 0
 
@@ -118,12 +158,14 @@ def main() -> int:
             inserted += 1
         except IntegrityError:
             duplicate += 1
+            if repair_existing_comment(message_id=str(payload["message_id"]), payload=payload):
+                repaired += 1
         except Exception as exc:
             failed += 1
             print(f"WARN: failed to import message idx={idx} method={method}: {type(exc).__name__}: {exc}")
 
     print(
-        f"IMPORT DONE: inserted={inserted} duplicate={duplicate} skipped={skipped} failed={failed} "
+        f"IMPORT DONE: inserted={inserted} duplicate={duplicate} repaired={repaired} skipped={skipped} failed={failed} "
         f"total_decoded={len(results.get('messages', []))} total_frames={results.get('total_frames', 0)}"
     )
     return 0 if inserted > 0 or duplicate > 0 else 2
