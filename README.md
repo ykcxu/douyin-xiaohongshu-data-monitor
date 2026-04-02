@@ -77,6 +77,12 @@ py -3 -m app.cli.probe_douyin_live_room --room-id 7044145585217083655 --account-
 py -3 -m app.cli.probe_douyin_signed_api --account-id douyin_demo --room-id 7044145585217083655 --preset room-web-enter
 ```
 
+如果要进一步观察页面运行时自己触发了哪些 `fetch/xhr/websocket`，以及加载阶段有没有真的调用 `frontierSign`，可以直接跑：
+
+```bash
+py -3 -m app.cli.trace_douyin_page_runtime --account-id douyin_demo --room-id 7044145585217083655 --wait-seconds 15
+```
+
 ## 数据库迁移
 
 ```bash
