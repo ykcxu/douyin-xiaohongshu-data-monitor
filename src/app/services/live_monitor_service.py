@@ -74,6 +74,45 @@ class LiveMonitorService:
 
         return {"scanned": scanned, "live_count": live_count}
 
+    def ingest_status_sample(
+        self,
+        *,
+        room_pk: int,
+        status_payload: dict[str, object],
+    ) -> dict[str, int | str]:
+        status = self._status_from_payload(status_payload)
+
+        with get_db_session() as session:
+            room = session.get(DouyinLiveRoom, room_pk)
+            if room is None:
+                raise ValueError(f"Live room {room_pk} not found")
+
+            active_session = self._get_active_session(session, room.id)
+            live_count = 0
+
+            room.last_live_status = status.live_status
+            room.nickname = status.nickname or room.nickname
+            room.live_title = status.live_title or room.live_title
+
+            if status.is_live:
+                live_count = 1
+                if active_session is None:
+                    active_session = self._open_session(session, room, status)
+                room.last_live_start_time = status.fetched_at
+                self._create_snapshot(session, room, active_session, status)
+            elif active_session is not None:
+                self._close_session(session, room, active_session, status.fetched_at)
+
+            room.updated_at = datetime.now(timezone.utc)
+            session.flush()
+
+            return {
+                "room_pk": room.id,
+                "session_id": active_session.id if active_session is not None else 0,
+                "live_count": live_count,
+                "live_status": status.live_status,
+            }
+
     def _get_active_session(self, session, live_room_id: int) -> DouyinLiveSession | None:
         stmt = (
             select(DouyinLiveSession)
@@ -206,6 +245,54 @@ class LiveMonitorService:
             session.refresh(comment)
             return comment
 
+    def ingest_comment_sample(
+        self,
+        *,
+        session_id: int,
+        comment_payload: dict[str, object],
+    ) -> dict[str, int]:
+        with get_db_session() as session:
+            live_session = session.get(DouyinLiveSession, session_id)
+            if live_session is None:
+                raise ValueError(f"Live session {session_id} not found")
+
+            room = session.get(DouyinLiveRoom, live_session.live_room_id)
+            if room is None:
+                raise ValueError(f"Live room {live_session.live_room_id} not found")
+
+        comment = self.record_comment(
+            session_id=live_session.id,
+            live_room_id=live_session.live_room_id,
+            room_id=live_session.room_id,
+            session_no=live_session.session_no,
+            comment_payload=comment_payload,
+        )
+        return {"id": comment.id, "session_id": comment.session_id}
+
+    def _status_from_payload(self, payload: dict[str, object]):
+        fetched_at = self._parse_datetime(payload.get("fetched_at")) or datetime.now(timezone.utc)
+        live_status = self._string(payload.get("live_status")) or "offline"
+        is_live = bool(payload.get("is_live", live_status == "live"))
+
+        from app.collector.douyin.live.status_collector import LiveRoomStatus
+
+        return LiveRoomStatus(
+            room_id=self._required_string(payload.get("room_id"), "room_id"),
+            fetched_at=fetched_at,
+            live_status=live_status,
+            is_live=is_live,
+            account_id=self._string(payload.get("account_id")),
+            nickname=self._string(payload.get("nickname")),
+            live_title=self._string(payload.get("live_title")),
+            source_url=self._string(payload.get("source_url")),
+            online_count=self._parse_int(payload.get("online_count")),
+            total_viewer_count=self._parse_int(payload.get("total_viewer_count")),
+            like_count=self._parse_int(payload.get("like_count")),
+            comment_count=self._parse_int(payload.get("comment_count")),
+            share_count=self._parse_int(payload.get("share_count")),
+            raw_payload=payload,
+        )
+
     def _parse_datetime(self, value: object) -> datetime | None:
         if isinstance(value, datetime):
             return value
@@ -235,3 +322,9 @@ class LiveMonitorService:
         if isinstance(value, str):
             return value
         return json.dumps(value, ensure_ascii=False)
+
+    def _required_string(self, value: object, field_name: str) -> str:
+        text = self._string(value)
+        if not text:
+            raise ValueError(f"{field_name} is required")
+        return text
