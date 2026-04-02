@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+import json
+import re
 from datetime import datetime, timezone
+from typing import Any
 
 import httpx
 
 from app.collector.douyin.live.exceptions import (
     DouyinAuthenticationRequired,
-    DouyinProviderNotReady,
+    DouyinRoomDataUnavailable,
 )
 from app.collector.douyin.live.request_context import (
     DouyinLiveRequestContext,
@@ -18,13 +21,7 @@ from app.services.login_state_service import LoginStateService
 
 
 class HttpDouyinLiveStatusCollector(DouyinLiveStatusCollector):
-    """
-    Placeholder for the real Douyin provider.
-
-    This class is intentionally narrow: once cookies, headers, signing, and the
-    exact endpoint are confirmed, we only need to fill in `_build_request` and
-    `_parse_response` without changing service or scheduler code.
-    """
+    """First-pass real Douyin provider based on authenticated room-page parsing."""
 
     def __init__(self, timeout_seconds: int = 15) -> None:
         self.timeout_seconds = timeout_seconds
@@ -32,7 +29,6 @@ class HttpDouyinLiveStatusCollector(DouyinLiveStatusCollector):
 
     def fetch_room_status(self, room: DouyinLiveRoom) -> LiveRoomStatus:
         request_context = self._build_request_context(room)
-        request_payload = self._build_request(room, request_context)
         now = datetime.now(timezone.utc)
 
         if room.account_id and not request_context.is_authenticated:
@@ -40,9 +36,57 @@ class HttpDouyinLiveStatusCollector(DouyinLiveStatusCollector):
                 f"Douyin login state is missing for account {room.account_id} and room {room.room_id}."
             )
 
-        raise DouyinProviderNotReady(
-            "HttpDouyinLiveStatusCollector is a placeholder. "
-            f"Prepared request context for room {room.room_id}: {request_payload} at {now.isoformat()}."
+        with self.build_client() as client:
+            response = client.get(
+                self._resolve_room_url(room),
+                headers=request_context.headers,
+                cookies=request_context.cookies,
+            )
+            response.raise_for_status()
+
+        page_state = self._extract_page_state(response.text)
+        room_store = page_state.get("roomStore", {})
+        room_info = room_store.get("roomInfo", {})
+        web_rid = self._normalize_text(room_info.get("web_rid") or room_info.get("roomId"))
+        live_status = self._normalize_text(room_store.get("liveStatus") or page_state.get("liveStatus"))
+        if web_rid is None and live_status is None:
+            raise DouyinRoomDataUnavailable(
+                f"Could not extract roomStore data from room page {response.url} for room {room.room_id}."
+            )
+
+        raw_payload = {
+            "collector": "http-page",
+            "fetched_at": now.isoformat(),
+            "request": {
+                "room_id": room.room_id,
+                "room_url": str(response.url),
+                "account_id": room.account_id,
+                "storage_state_path": (
+                    str(request_context.storage_state_path)
+                    if request_context.storage_state_path
+                    else None
+                ),
+                "has_cookies": bool(request_context.cookies),
+            },
+            "page_state": page_state,
+        }
+        resolved_live_status = live_status or "unknown"
+        resolved_room_id = web_rid or room.room_id
+        return LiveRoomStatus(
+            room_id=resolved_room_id,
+            fetched_at=now,
+            live_status=resolved_live_status,
+            is_live=resolved_live_status == "normal" and web_rid is not None,
+            account_id=room.account_id,
+            nickname=self._extract_nickname(page_state) or room.nickname,
+            live_title=self._normalize_text(room_info.get("title")) or room.live_title,
+            source_url=str(response.url),
+            online_count=self._extract_int(room_info.get("user_count")),
+            total_viewer_count=self._extract_int(room_info.get("total_user_count")),
+            like_count=self._extract_int(room_info.get("like_count")),
+            comment_count=self._extract_int(room_info.get("comment_count")),
+            share_count=self._extract_int(room_info.get("share_count")),
+            raw_payload=raw_payload,
         )
 
     def build_client(self) -> httpx.Client:
@@ -88,3 +132,144 @@ class HttpDouyinLiveStatusCollector(DouyinLiveStatusCollector):
             "header_keys": sorted(request_context.headers.keys()),
             "metadata": request_context.metadata,
         }
+
+    def _resolve_room_url(self, room: DouyinLiveRoom) -> str:
+        if room.room_url:
+            return room.room_url
+        return f"https://live.douyin.com/{room.room_id}"
+
+    def _extract_page_state(self, html: str) -> dict[str, Any]:
+        room_store_candidates = self._extract_all_escaped_json_between(
+            html,
+            start_marker='\\"roomStore\\":',
+            end_marker=',\\"linkmicStore\\":',
+        )
+        room_store_candidates.extend(
+            self._extract_all_escaped_json_between(
+                html,
+                start_marker='"roomStore":',
+                end_marker=',"linkmicStore":',
+            )
+        )
+        room_store = self._select_best_room_store(room_store_candidates)
+        if room_store is None:
+            raise DouyinRoomDataUnavailable("roomStore block was not found in the Douyin room page HTML.")
+
+        result: dict[str, Any] = {
+            "roomStore": room_store,
+        }
+        default_user_info = self._extract_escaped_json_between(
+            html,
+            start_marker='\\"defaultHeaderUserInfo\\":',
+            end_marker=',\\"domain\\":',
+        )
+        if default_user_info is None:
+            default_user_info = self._extract_escaped_json_between(
+                html,
+                start_marker='"defaultHeaderUserInfo":',
+                end_marker=',"domain":',
+            )
+        if default_user_info is not None:
+            result["defaultHeaderUserInfo"] = default_user_info
+        odin = self._extract_escaped_json_between(
+            html,
+            start_marker='\\"odin\\":',
+            end_marker=',\\"userHandlerPause\\":',
+        )
+        if odin is None:
+            odin = self._extract_escaped_json_between(
+                html,
+                start_marker='"odin":',
+                end_marker=',"userHandlerPause":',
+            )
+        if odin is not None:
+            result["odin"] = odin
+        return result
+
+    def _extract_escaped_json_between(
+        self,
+        html: str,
+        *,
+        start_marker: str,
+        end_marker: str,
+    ) -> dict[str, Any] | None:
+        items = self._extract_all_escaped_json_between(
+            html,
+            start_marker=start_marker,
+            end_marker=end_marker,
+        )
+        return items[0] if items else None
+
+    def _extract_all_escaped_json_between(
+        self,
+        html: str,
+        *,
+        start_marker: str,
+        end_marker: str,
+    ) -> list[dict[str, Any]]:
+        items: list[dict[str, Any]] = []
+        search_from = 0
+        while True:
+            marker_index = html.find(start_marker, search_from)
+            if marker_index == -1:
+                break
+            start = html.find("{", marker_index)
+            if start == -1:
+                break
+            end = html.find(end_marker, start)
+            if end == -1:
+                break
+
+            fragment = html[start:end]
+            normalized = fragment.replace('\\"', '"')
+            try:
+                items.append(json.loads(normalized))
+            except json.JSONDecodeError:
+                pass
+            search_from = end + len(end_marker)
+        return items
+
+    def _select_best_room_store(self, candidates: list[dict[str, Any]]) -> dict[str, Any] | None:
+        if not candidates:
+            return None
+
+        def score(candidate: dict[str, Any]) -> tuple[int, int]:
+            room_info = candidate.get("roomInfo")
+            if not isinstance(room_info, dict):
+                return (0, len(candidate))
+            web_rid = room_info.get("web_rid") or room_info.get("roomId")
+            return (1 if web_rid else 0, len(candidate))
+
+        return max(candidates, key=score)
+
+    def _extract_nickname(self, page_state: dict[str, Any]) -> str | None:
+        default_header = page_state.get("defaultHeaderUserInfo")
+        if not isinstance(default_header, dict):
+            return None
+        info = default_header.get("info")
+        if not isinstance(info, dict):
+            return None
+        return self._normalize_text(info.get("nickname"))
+
+    def _extract_int(self, value: Any) -> int | None:
+        if value is None or value == "":
+            return None
+        if isinstance(value, int):
+            return value
+        if isinstance(value, float):
+            return int(value)
+        if isinstance(value, str):
+            digits = re.sub(r"[^\d]", "", value)
+            if digits:
+                return int(digits)
+        return None
+
+    def _normalize_text(self, value: Any) -> str | None:
+        if value is None:
+            return None
+        text = str(value).strip()
+        if not text:
+            return None
+        if text == "$undefined":
+            return None
+        return text

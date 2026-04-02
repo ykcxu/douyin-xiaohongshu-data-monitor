@@ -51,6 +51,14 @@ py -3 -m app.cli.export_douyin_storage_state --account-id douyin_demo --operator
 py -3 -m app.cli.inspect_login_state --account-id douyin_demo
 ```
 
+### 追踪真实直播间请求
+
+```bash
+py -3 -m app.cli.trace_douyin_live_requests --account-id douyin_demo --room-url https://live.douyin.com/7044145585217083655
+```
+
+这会打开带登录态的浏览器，并把 `fetch/xhr/websocket` 请求写进 `data/raw/douyin/request-trace/`，方便继续定位在线人数、弹幕和评论接口。
+
 ## 数据库迁移
 
 ```bash

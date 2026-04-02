@@ -8,3 +8,7 @@ class DouyinAuthenticationRequired(DouyinProviderError):
 
 class DouyinProviderNotReady(DouyinProviderError):
     """Raised when the provider is configured but the real integration is not implemented yet."""
+
+
+class DouyinRoomDataUnavailable(DouyinProviderError):
+    """Raised when a room page is reachable but the expected room data cannot be extracted."""
