@@ -3,11 +3,13 @@ from pathlib import Path
 from playwright.sync_api import BrowserContext, Playwright, sync_playwright
 
 from app.config.settings import get_settings
+from app.services.login_state_service import LoginStateService
 
 
 class BrowserLoginManager:
     def __init__(self) -> None:
         self.settings = get_settings()
+        self.login_state_service = LoginStateService()
 
     def state_file(self, platform: str, account_id: str) -> Path:
         return self.settings.browser_state_dir / platform / f"{account_id}.json"
@@ -33,5 +35,13 @@ class BrowserLoginManager:
             page.goto(login_url, wait_until="domcontentloaded")
             page.wait_for_timeout(60000)
             state_file = self.save_state(context, platform, account_id)
+            browser = context.browser
             context.close()
+            if browser is not None:
+                browser.close()
+        self.login_state_service.upsert_storage_state(
+            platform=platform,
+            account_id=account_id,
+            storage_state_path=state_file,
+        )
         return state_file

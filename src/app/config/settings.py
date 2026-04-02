@@ -24,6 +24,9 @@ class Settings(BaseSettings):
 
     browser_state_dir: Path = Field(default=Path("./runtime/browser"), alias="BROWSER_STATE_DIR")
     raw_data_dir: Path = Field(default=Path("./data/raw"), alias="RAW_DATA_DIR")
+    scheduler_enabled: bool = Field(default=True, alias="SCHEDULER_ENABLED")
+    live_status_poll_seconds: int = Field(default=30, alias="LIVE_STATUS_POLL_SECONDS")
+    live_snapshot_poll_seconds: int = Field(default=30, alias="LIVE_SNAPSHOT_POLL_SECONDS")
 
     model_config = SettingsConfigDict(
         env_file=".env",
