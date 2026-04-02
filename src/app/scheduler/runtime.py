@@ -3,6 +3,7 @@ from __future__ import annotations
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 
+from app.collector.douyin.live.factory import create_douyin_live_status_collector
 from app.config.settings import get_settings
 from app.services.live_monitor_service import LiveMonitorService
 
@@ -11,7 +12,7 @@ class SchedulerRuntime:
     def __init__(self) -> None:
         self.settings = get_settings()
         self.scheduler = BackgroundScheduler(timezone="Asia/Shanghai")
-        self.live_monitor_service = LiveMonitorService()
+        self.live_monitor_service = LiveMonitorService(create_douyin_live_status_collector())
         self._configured = False
 
     def configure(self) -> None:

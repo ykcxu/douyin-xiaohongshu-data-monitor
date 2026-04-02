@@ -27,6 +27,7 @@ class Settings(BaseSettings):
     scheduler_enabled: bool = Field(default=True, alias="SCHEDULER_ENABLED")
     live_status_poll_seconds: int = Field(default=30, alias="LIVE_STATUS_POLL_SECONDS")
     live_snapshot_poll_seconds: int = Field(default=30, alias="LIVE_SNAPSHOT_POLL_SECONDS")
+    douyin_live_provider: str = Field(default="stub", alias="DOUYIN_LIVE_PROVIDER")
 
     model_config = SettingsConfigDict(
         env_file=".env",
