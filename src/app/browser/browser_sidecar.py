@@ -156,6 +156,9 @@ class BrowserSidecar:
             session = RoomWatchSession(room_id=room_id, account_id=account_id)
             context = self._get_or_create_context(platform, account_id)
             page = context.new_page()
+            cdp_session = context.new_cdp_session(page)
+            cdp_session.send("Network.enable")
+            session.cdp_session = cdp_session
 
             self._setup_websocket_monitoring(session, page)
 
@@ -169,42 +172,46 @@ class BrowserSidecar:
             return session
 
     def _setup_websocket_monitoring(self, session: RoomWatchSession, page: Page) -> None:
-        def handle_ws(ws) -> None:
-            if "frontier" in ws.url or "/webcast/im/" in ws.url:
-                ws.on("framereceived", lambda frame: self._on_ws_frame(session, frame, "received"))
-                ws.on("framesent", lambda frame: self._on_ws_frame(session, frame, "sent"))
+        cdp = session.cdp_session
+        if cdp is None:
+            return
 
-        page.on("websocket", handle_ws)
+        def on_websocket_created(params: dict[str, Any]) -> None:
+            request_id = params.get("requestId")
+            if request_id:
+                session.ws_request_ids.add(str(request_id))
 
-    def _on_ws_frame(self, session: RoomWatchSession, frame: Any, direction: str) -> None:
+        def on_websocket_frame_received(params: dict[str, Any]) -> None:
+            if str(params.get("requestId") or "") not in session.ws_request_ids:
+                return
+            response_payload = params.get("response", {})
+            self._on_cdp_ws_frame(session, response_payload, "received")
+
+        def on_websocket_frame_sent(params: dict[str, Any]) -> None:
+            if str(params.get("requestId") or "") not in session.ws_request_ids:
+                return
+            response_payload = params.get("response", {})
+            self._on_cdp_ws_frame(session, response_payload, "sent")
+
+        cdp.on("Network.webSocketCreated", on_websocket_created)
+        cdp.on("Network.webSocketFrameReceived", on_websocket_frame_received)
+        cdp.on("Network.webSocketFrameSent", on_websocket_frame_sent)
+
+    def _on_cdp_ws_frame(self, session: RoomWatchSession, frame: dict[str, Any], direction: str) -> None:
         try:
+            opcode = frame.get("opcode")
+            payload = frame.get("payloadData")
             item: dict[str, Any] = {
                 "timestamp": datetime.now(timezone.utc).isoformat(),
                 "direction": direction,
+                "opcode": opcode,
             }
-            if isinstance(frame, (bytes, bytearray)):
+            if opcode == 2 and payload:
                 item["is_binary"] = True
-                item["data_b64"] = base64.b64encode(bytes(frame)).decode("ascii")
-            elif isinstance(frame, str):
-                item["is_binary"] = False
-                item["text"] = frame
-            elif isinstance(frame, dict):
-                opcode = frame.get("opcode")
-                payload = frame.get("payload")
-                item["opcode"] = opcode
-                if isinstance(payload, (bytes, bytearray)):
-                    item["is_binary"] = True
-                    item["data_b64"] = base64.b64encode(bytes(payload)).decode("ascii")
-                elif isinstance(payload, str):
-                    item["is_binary"] = opcode == 2
-                    if opcode == 2:
-                        item["data_b64"] = payload
-                    else:
-                        item["text"] = payload
-                else:
-                    item["repr"] = repr(frame)
+                item["data_b64"] = str(payload)
             else:
-                item["repr"] = repr(frame)
+                item["is_binary"] = False
+                item["text"] = str(payload or "")
 
             session.websocket_frames.append(item)
             if len(session.websocket_frames) > 1000:
@@ -236,6 +243,28 @@ class BrowserSidecar:
             try:
                 html = session.page.content()
                 page_state = self._extract_page_state(html)
+
+                # Prefer live page runtime state when available; HTML may contain stale/partial roomStore.
+                try:
+                    js_room_store = session.page.evaluate("""() => {
+                        if (window.roomStore) return window.roomStore;
+                        return null;
+                    }""")
+                    if js_room_store:
+                        page_state["roomStore"] = js_room_store
+                except Exception:
+                    pass
+
+                try:
+                    js_user_info = session.page.evaluate("""() => {
+                        if (window.defaultHeaderUserInfo) return window.defaultHeaderUserInfo;
+                        return null;
+                    }""")
+                    if js_user_info and "defaultHeaderUserInfo" not in page_state:
+                        page_state["defaultHeaderUserInfo"] = js_user_info
+                except Exception:
+                    pass
+
                 session.last_status = page_state
                 session.last_update = datetime.now(timezone.utc)
                 return {

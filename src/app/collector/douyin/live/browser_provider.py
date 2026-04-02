@@ -7,6 +7,7 @@ from typing import Any
 
 from playwright.sync_api import sync_playwright
 
+from app.browser.browser_sidecar import get_browser_sidecar
 from app.collector.douyin.live.exceptions import (
     DouyinAuthenticationRequired,
     DouyinRoomDataUnavailable,
@@ -26,64 +27,47 @@ class BrowserDouyinLiveStatusCollector(DouyinLiveStatusCollector):
 
     def fetch_room_status(self, room: DouyinLiveRoom) -> LiveRoomStatus:
         now = datetime.now(timezone.utc)
-        
-        # Resolve storage state path
+
         storage_state_path = None
         if room.account_id:
             storage_state_path = self.login_state_service.resolve_storage_state_path(
                 platform="douyin",
                 account_id=room.account_id,
             )
-        
+
         if room.account_id and not storage_state_path:
             raise DouyinAuthenticationRequired(
                 f"Douyin login state is missing for account {room.account_id} and room {room.room_id}."
             )
 
         room_url = self._resolve_room_url(room)
-        
-        with sync_playwright() as p:
-            browser = p.chromium.launch(headless=self.headless)
-            
-            context_options = {}
-            if storage_state_path:
-                context_options["storage_state"] = str(storage_state_path)
-            
-            context = browser.new_context(**context_options)
-            page = context.new_page()
-            
-            try:
-                # Use domcontentloaded for faster navigation
-                page.goto(room_url, wait_until="domcontentloaded", timeout=self.timeout_seconds * 1000)
-                
-                # Wait for page to settle and load some resources
-                page.wait_for_timeout(5000)
-                
-                html = page.content()
-                page_state = self._extract_page_state(html)
-                
-                # Try to extract additional data from page JavaScript
-                try:
-                    js_room_data = page.evaluate("""() => {
-                        if (window.roomStore) {
-                            return window.roomStore;
-                        }
-                        return null;
-                    }""")
-                    
-                    if js_room_data:
-                        page_state["roomStore"] = js_room_data
-                except Exception:
-                    pass
-                
-            except Exception as e:
-                raise DouyinRoomDataUnavailable(
-                    f"Failed to fetch room page for {room.room_id}: {str(e)}"
-                )
-            finally:
-                context.close()
-                browser.close()
+        sidecar = get_browser_sidecar()
 
+        try:
+            sidecar.watch_room(
+                room_id=room.room_id,
+                account_id=room.account_id or "douyin_demo",
+                platform="douyin",
+                room_url=room_url,
+            )
+            status_payload = sidecar.get_room_status(room.room_id)
+            if not status_payload or status_payload.get("error"):
+                sidecar.refresh_room(room.room_id)
+                status_payload = sidecar.get_room_status(room.room_id)
+        except Exception as e:
+            raise DouyinRoomDataUnavailable(
+                f"Failed to fetch room page via sidecar for {room.room_id}: {str(e)}"
+            )
+
+        if not status_payload or status_payload.get("error"):
+            raise DouyinRoomDataUnavailable(
+                f"Failed to fetch room page state for {room.room_id}: {status_payload}"
+            )
+
+        page_state = status_payload.get("status", {}) if isinstance(status_payload, dict) else {}
+        websocket_frames_count = 0
+        if isinstance(status_payload, dict):
+            websocket_frames_count = int(status_payload.get("websocket_frames_count") or 0)
         room_store = page_state.get("roomStore", {})
         room_info = room_store.get("roomInfo", {}) if isinstance(room_store, dict) else {}
         nested_room = room_info.get("room", {}) if isinstance(room_info, dict) else {}
@@ -110,7 +94,9 @@ class BrowserDouyinLiveStatusCollector(DouyinLiveStatusCollector):
         )
         resolved_live_status = room_status_text or live_status or (str(room_status_code) if room_status_code is not None else "unknown")
 
-        if has_stream_url:
+        if websocket_frames_count > 0:
+            is_live = True
+        elif has_stream_url:
             is_live = True
         elif room_status_code in {2, 4}:
             is_live = True
@@ -136,6 +122,7 @@ class BrowserDouyinLiveStatusCollector(DouyinLiveStatusCollector):
                 "headless": self.headless,
             },
             "page_state": page_state,
+            "websocket_frames_count": websocket_frames_count,
         }
         
         return LiveRoomStatus(

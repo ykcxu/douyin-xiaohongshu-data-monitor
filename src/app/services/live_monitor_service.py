@@ -6,11 +6,13 @@ from datetime import datetime, timezone
 
 from sqlalchemy import select
 
+from app.browser.browser_sidecar import get_browser_sidecar
 from app.collector.douyin.live.exceptions import DouyinProviderError
 from app.collector.douyin.live.status_collector import (
     DouyinLiveStatusCollector,
     StubDouyinLiveStatusCollector,
 )
+from app.collector.douyin.live.websocket_decoder import DouyinWebSocketDecoder
 from app.db.session import get_db_session
 from app.models.douyin_live_comment import DouyinLiveComment
 from app.models.douyin_live_room import DouyinLiveRoom
@@ -25,6 +27,39 @@ class LiveMonitorService:
         self.collector = collector or StubDouyinLiveStatusCollector()
         self.archive_service = JsonlArchiveService()
         self.login_state_service = LoginStateService()
+        self.ws_decoder = DouyinWebSocketDecoder()
+        self._room_frame_cursors: dict[str, int] = {}
+        self._sidecar_errors: dict[str, str] = {}
+
+    def _get_sidecar(self):
+        return get_browser_sidecar()
+
+    def get_sidecar_stats(self) -> dict[str, object]:
+        stats = self._get_sidecar().get_stats()
+        stats["frame_cursors"] = dict(self._room_frame_cursors)
+        stats["sidecar_errors"] = dict(self._sidecar_errors)
+        return stats
+
+    def debug_decode_room_frames(self, room_id: str, limit: int = 5) -> dict[str, object]:
+        frames, cursor = self._get_sidecar().get_websocket_frames(room_id, since=0, direction="received")
+        recent = frames[-limit:] if limit > 0 else frames
+        decoded_items: list[dict[str, object]] = []
+        for frame in recent:
+            if not frame.get("is_binary") or not frame.get("data_b64"):
+                continue
+            result = self.ws_decoder.decode_frame_base64(str(frame["data_b64"]))
+            decoded_items.append({
+                "timestamp": frame.get("timestamp"),
+                "error": result.error,
+                "message_count": len(result.messages),
+                "methods": [m.method for m in result.messages[:20]],
+            })
+        return {
+            "room_id": room_id,
+            "total_frames": len(frames),
+            "cursor": cursor,
+            "decoded_samples": decoded_items,
+        }
 
     def scan_rooms_once(self) -> dict[str, int]:
         scanned = 0
@@ -67,8 +102,11 @@ class LiveMonitorService:
                         active_session = self._open_session(session, room, status)
                     room.last_live_start_time = status.fetched_at
                     self._create_snapshot(session, room, active_session, status)
+                    self._ensure_sidecar_watch(room)
+                    self._ingest_sidecar_messages(room, active_session)
                 elif active_session is not None:
                     self._close_session(session, room, active_session, status.fetched_at)
+                    self._stop_sidecar_watch(room.room_id)
 
                 room.updated_at = datetime.now(timezone.utc)
 
@@ -119,33 +157,38 @@ class LiveMonitorService:
     def _ensure_sidecar_watch(self, room: DouyinLiveRoom) -> None:
         try:
             if not room.account_id:
+                self._sidecar_errors[room.room_id] = "missing account_id"
                 return
-            self.browser_sidecar.watch_room(
+            self._get_sidecar().watch_room(
                 room_id=room.room_id,
                 account_id=room.account_id,
                 platform="douyin",
                 room_url=room.room_url,
             )
-        except Exception:
-            # 深采集失败不影响状态扫描主链路
+            self._sidecar_errors.pop(room.room_id, None)
+        except Exception as e:
+            self._sidecar_errors[room.room_id] = f"{type(e).__name__}: {e}"
+            print(f"[sidecar-watch-error] room_id={room.room_id} error={type(e).__name__}: {e}")
             return
 
     def _stop_sidecar_watch(self, room_id: str) -> None:
         self._room_frame_cursors.pop(room_id, None)
         try:
-            self.browser_sidecar.stop_watching(room_id)
+            self._get_sidecar().stop_watching(room_id)
         except Exception:
             pass
 
     def _ingest_sidecar_messages(self, room: DouyinLiveRoom, live_session: DouyinLiveSession) -> None:
         cursor = self._room_frame_cursors.get(room.room_id, 0)
         try:
-            frames, next_cursor = self.browser_sidecar.get_websocket_frames(
+            frames, next_cursor = self._get_sidecar().get_websocket_frames(
                 room.room_id,
                 since=cursor,
                 direction="received",
             )
-        except Exception:
+        except Exception as e:
+            self._sidecar_errors[room.room_id] = f"frame-read {type(e).__name__}: {e}"
+            print(f"[sidecar-frame-error] room_id={room.room_id} error={type(e).__name__}: {e}")
             return
         self._room_frame_cursors[room.room_id] = next_cursor
 
