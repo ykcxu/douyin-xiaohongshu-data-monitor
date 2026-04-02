@@ -65,6 +65,12 @@ py -3 -m app.cli.trace_douyin_live_requests --account-id douyin_demo --room-url 
 py -3 -m app.cli.analyze_douyin_trace --input data/raw/douyin/request-trace/douyin_demo-20260402T051008Z.jsonl
 ```
 
+探测单个直播间的已知候选接口：
+
+```bash
+py -3 -m app.cli.probe_douyin_live_room --room-id 7044145585217083655 --account-id douyin_demo
+```
+
 ## 数据库迁移
 
 ```bash

@@ -4,6 +4,7 @@ import json
 import re
 from datetime import datetime, timezone
 from typing import Any
+from urllib.parse import urlencode
 
 import httpx
 
@@ -92,6 +93,42 @@ class HttpDouyinLiveStatusCollector(DouyinLiveStatusCollector):
     def build_client(self) -> httpx.Client:
         return httpx.Client(timeout=self.timeout_seconds, follow_redirects=True)
 
+    def build_debug_bundle(self, room: DouyinLiveRoom) -> dict[str, Any]:
+        request_context = self._build_request_context(room)
+        with self.build_client() as client:
+            room_response = client.get(
+                self._resolve_room_url(room),
+                headers=request_context.headers,
+                cookies=request_context.cookies,
+            )
+            room_response.raise_for_status()
+            page_state = self._extract_page_state(room_response.text)
+            room_store = page_state.get("roomStore", {})
+            room_info = room_store.get("roomInfo", {})
+            web_rid = self._normalize_text(room_info.get("web_rid") or room.room_id) or room.room_id
+
+            result: dict[str, Any] = {
+                "room_url": str(room_response.url),
+                "page_state": page_state,
+                "request_context": {
+                    "account_id": request_context.account_id,
+                    "storage_state_path": (
+                        str(request_context.storage_state_path)
+                        if request_context.storage_state_path
+                        else None
+                    ),
+                    "has_cookies": bool(request_context.cookies),
+                },
+                "api_samples": {},
+            }
+            for name, url in self._known_debug_urls(room=room, web_rid=web_rid).items():
+                result["api_samples"][name] = self._fetch_json_sample(
+                    client=client,
+                    url=url,
+                    request_context=request_context,
+                )
+            return result
+
     def _build_request_context(self, room: DouyinLiveRoom) -> DouyinLiveRequestContext:
         storage_state_path = None
         if room.account_id:
@@ -137,6 +174,55 @@ class HttpDouyinLiveStatusCollector(DouyinLiveStatusCollector):
         if room.room_url:
             return room.room_url
         return f"https://live.douyin.com/{room.room_id}"
+
+    def _build_common_query_params(self) -> dict[str, str]:
+        return {
+            "aid": "6383",
+            "app_name": "douyin_web",
+            "live_id": "1",
+            "device_platform": "web",
+            "language": "zh-CN",
+            "enter_from": "link_share",
+            "cookie_enabled": "true",
+            "screen_width": "1280",
+            "screen_height": "720",
+            "browser_language": "zh-CN",
+            "browser_platform": "Win32",
+            "browser_name": "Chrome",
+            "browser_version": "145.0.0.0",
+        }
+
+    def _known_debug_urls(self, *, room: DouyinLiveRoom, web_rid: str) -> dict[str, str]:
+        common = self._build_common_query_params()
+        return {
+            "webcast_setting": "https://live.douyin.com/webcast/setting/?" + urlencode(common),
+            "webcast_user_me": "https://live.douyin.com/webcast/user/me/?"
+            + urlencode({**common, "room_id": "0"}),
+            "similar_room_by_anchor": "https://live.douyin.com/webcast/web/similar_room_by_anchor/?"
+            + urlencode({**common, "web_rid": web_rid, "count": "5", "offset": "0"}),
+        }
+
+    def _fetch_json_sample(
+        self,
+        *,
+        client: httpx.Client,
+        url: str,
+        request_context: DouyinLiveRequestContext,
+    ) -> dict[str, Any]:
+        response = client.get(
+            url,
+            headers=request_context.headers,
+            cookies=request_context.cookies,
+        )
+        result: dict[str, Any] = {
+            "url": str(response.url),
+            "status_code": response.status_code,
+        }
+        try:
+            result["body"] = response.json()
+        except json.JSONDecodeError:
+            result["body_preview"] = response.text[:5000]
+        return result
 
     def _extract_page_state(self, html: str) -> dict[str, Any]:
         room_store_candidates = self._extract_all_escaped_json_between(
