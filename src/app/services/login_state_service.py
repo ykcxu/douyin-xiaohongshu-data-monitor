@@ -10,6 +10,56 @@ from app.models.login_state import BrowserLoginState
 
 
 class LoginStateService:
+    def get_state(self, *, platform: str, account_id: str) -> BrowserLoginState | None:
+        with get_db_session() as session:
+            stmt = select(BrowserLoginState).where(
+                BrowserLoginState.platform == platform,
+                BrowserLoginState.account_id == account_id,
+            )
+            return session.execute(stmt).scalar_one_or_none()
+
+    def mark_state(
+        self,
+        *,
+        platform: str,
+        account_id: str,
+        status: str,
+        expire_risk_level: str | None = None,
+        last_error_code: str | None = None,
+        last_error_message: str | None = None,
+    ) -> BrowserLoginState | None:
+        now = datetime.now(timezone.utc)
+
+        with get_db_session() as session:
+            stmt = select(BrowserLoginState).where(
+                BrowserLoginState.platform == platform,
+                BrowserLoginState.account_id == account_id,
+            )
+            state = session.execute(stmt).scalar_one_or_none()
+            if state is None:
+                return None
+
+            state.status = status
+            state.expire_risk_level = expire_risk_level
+            state.last_error_code = last_error_code
+            state.last_error_message = last_error_message
+            if status == "valid":
+                state.last_valid_time = now
+
+            session.flush()
+            session.refresh(state)
+            return state
+
+    def resolve_storage_state_path(self, *, platform: str, account_id: str) -> Path | None:
+        state = self.get_state(platform=platform, account_id=account_id)
+        if state is None:
+            return None
+
+        path = Path(state.storage_state_path)
+        if path.exists():
+            return path
+        return None
+
     def upsert_storage_state(
         self,
         *,
