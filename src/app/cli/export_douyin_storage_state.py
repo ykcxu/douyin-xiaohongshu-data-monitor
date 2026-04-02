@@ -26,6 +26,12 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Optional operator name written to browser_login_state.",
     )
+    parser.add_argument(
+        "--wait-seconds",
+        type=int,
+        default=600,
+        help="Fallback wait time when stdin is unavailable (default: 600 seconds).",
+    )
     return parser
 
 
@@ -40,6 +46,7 @@ def main() -> int:
         account_id=args.account_id,
         login_url=args.login_url,
         operator=args.operator,
+        fallback_wait_seconds=args.wait_seconds,
     )
     print(f"Saved storage_state: {state_file}")
     return 0

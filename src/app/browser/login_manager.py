@@ -78,8 +78,12 @@ class BrowserLoginManager:
             try:
                 input()
             except EOFError:
-                # Fall back to a short wait when stdin is unavailable.
-                page.wait_for_timeout(30000)
+                # In non-interactive environments (like OpenClaw exec), stdin may be unavailable.
+                # Wait a generous amount of time so a human can finish QR login instead of auto-closing too early.
+                print(
+                    f"[{platform}] stdin unavailable; keeping browser open for up to {fallback_wait_seconds} seconds before saving storage_state..."
+                )
+                page.wait_for_timeout(fallback_wait_seconds * 1000)
             state_file = self.save_state(context, platform, account_id)
             cookie_hash = self.compute_cookie_hash(state_file)
             browser = context.browser
