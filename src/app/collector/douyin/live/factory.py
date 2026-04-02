@@ -1,3 +1,4 @@
+from app.collector.douyin.live.providers import HttpDouyinLiveStatusCollector
 from app.collector.douyin.live.status_collector import (
     DouyinLiveStatusCollector,
     StubDouyinLiveStatusCollector,
@@ -12,5 +13,7 @@ def create_douyin_live_status_collector() -> DouyinLiveStatusCollector:
     # and service layer do not need to change when live integrations are added.
     if settings.douyin_live_provider == "stub":
         return StubDouyinLiveStatusCollector()
+    if settings.douyin_live_provider == "http":
+        return HttpDouyinLiveStatusCollector()
 
     raise ValueError(f"Unsupported Douyin live provider: {settings.douyin_live_provider}")
