@@ -59,6 +59,12 @@ py -3 -m app.cli.trace_douyin_live_requests --account-id douyin_demo --room-url 
 
 这会打开带登录态的浏览器，并把 `fetch/xhr/websocket` 请求写进 `data/raw/douyin/request-trace/`，方便继续定位在线人数、弹幕和评论接口。
 
+分析抓到的样本：
+
+```bash
+py -3 -m app.cli.analyze_douyin_trace --input data/raw/douyin/request-trace/douyin_demo-20260402T051008Z.jsonl
+```
+
 ## 数据库迁移
 
 ```bash
