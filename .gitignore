@@ -11,6 +11,8 @@ env/
 # Tooling
 .idea/
 .vscode/
+.env
+runtime/
 
 # Data and logs
 data/

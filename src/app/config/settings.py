@@ -1,0 +1,53 @@
+from functools import lru_cache
+from pathlib import Path
+
+from pydantic import Field
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class Settings(BaseSettings):
+    app_name: str = Field(default="douyin-xiaohongshu-monitor", alias="APP_NAME")
+    app_env: str = Field(default="development", alias="APP_ENV")
+    app_root: Path = Field(default=Path("."), alias="APP_ROOT")
+    app_host: str = Field(default="0.0.0.0", alias="APP_HOST")
+    app_port: int = Field(default=8000, alias="APP_PORT")
+    log_level: str = Field(default="INFO", alias="LOG_LEVEL")
+
+    postgres_db: str = Field(default="monitoring", alias="POSTGRES_DB")
+    postgres_user: str = Field(default="monitoring", alias="POSTGRES_USER")
+    postgres_password: str = Field(default="change_me", alias="POSTGRES_PASSWORD")
+    postgres_host: str = Field(default="localhost", alias="POSTGRES_HOST")
+    postgres_port: int = Field(default=5432, alias="POSTGRES_PORT")
+
+    redis_host: str = Field(default="localhost", alias="REDIS_HOST")
+    redis_port: int = Field(default=6379, alias="REDIS_PORT")
+
+    browser_state_dir: Path = Field(default=Path("./runtime/browser"), alias="BROWSER_STATE_DIR")
+    raw_data_dir: Path = Field(default=Path("./data/raw"), alias="RAW_DATA_DIR")
+
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        case_sensitive=False,
+        extra="ignore",
+    )
+
+    @property
+    def sqlalchemy_database_uri(self) -> str:
+        return (
+            "postgresql+psycopg://"
+            f"{self.postgres_user}:{self.postgres_password}"
+            f"@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
+        )
+
+    @property
+    def redis_url(self) -> str:
+        return f"redis://{self.redis_host}:{self.redis_port}/0"
+
+
+@lru_cache
+def get_settings() -> Settings:
+    settings = Settings()
+    settings.browser_state_dir.mkdir(parents=True, exist_ok=True)
+    settings.raw_data_dir.mkdir(parents=True, exist_ok=True)
+    return settings

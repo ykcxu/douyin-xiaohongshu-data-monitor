@@ -1,0 +1,53 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: deploy/docker/Dockerfile
+    env_file:
+      - .env
+    ports:
+      - "${APP_PORT:-8000}:8000"
+    volumes:
+      - ./:/app
+      - ./data:/app/data
+      - ./logs:/app/logs
+      - ./runtime:/app/runtime
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
+
+  postgres:
+    image: postgres:15
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-monitoring}
+      POSTGRES_USER: ${POSTGRES_USER:-monitoring}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change_me}
+      TZ: ${TZ:-Asia/Shanghai}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - ./runtime/postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-monitoring} -d ${POSTGRES_DB:-monitoring}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  redis:
+    image: redis:7
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - ./runtime/redis:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
