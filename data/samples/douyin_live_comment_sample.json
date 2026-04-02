@@ -1,0 +1,15 @@
+{
+  "message_id": "demo-comment-001",
+  "message_type": "comment",
+  "event_time": "2026-04-02T12:00:15+08:00",
+  "fetch_time": "2026-04-02T12:00:30+08:00",
+  "sequence_no": 1,
+  "user_id": "user-demo-001",
+  "nickname": "演示用户",
+  "display_name": "演示用户",
+  "content": "这个直播间监测项目不错",
+  "content_plain": "这个直播间监测项目不错",
+  "ip_location": "上海",
+  "is_admin": false,
+  "is_anchor": false
+}

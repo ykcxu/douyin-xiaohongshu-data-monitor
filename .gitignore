@@ -15,7 +15,9 @@ env/
 runtime/
 
 # Data and logs
-data/
+data/*
+!data/samples/
+!data/samples/*.json
 logs/
 *.log
 

@@ -10,6 +10,7 @@ from app.api.routes.health import router as health_router
 from app.api.routes.login_states import router as login_states_router
 from app.api.routes.monitor import router as monitor_router
 from app.api.routes.seed import router as seed_router
+from app.api.routes.system import router as system_router
 from app.api.routes.xiaohongshu_data import router as xiaohongshu_data_router
 from app.api.routes.xiaohongshu_ingest import router as xiaohongshu_ingest_router
 from app.config.settings import get_settings
@@ -37,6 +38,7 @@ app.include_router(health_router)
 app.include_router(login_states_router)
 app.include_router(monitor_router)
 app.include_router(seed_router)
+app.include_router(system_router)
 app.include_router(xiaohongshu_data_router)
 app.include_router(xiaohongshu_ingest_router)
 

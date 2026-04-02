@@ -1,0 +1,15 @@
+{
+  "room_id": "demo-room-001",
+  "fetched_at": "2026-04-02T12:00:00+08:00",
+  "live_status": "live",
+  "is_live": true,
+  "account_id": "douyin_demo_account_001",
+  "nickname": "抖音演示直播间",
+  "live_title": "直播监测演示房间",
+  "source_url": "https://live.douyin.com/demo-room-001",
+  "online_count": 1288,
+  "total_viewer_count": 5000,
+  "like_count": 18888,
+  "comment_count": 326,
+  "share_count": 42
+}
