@@ -179,7 +179,10 @@ class DouyinWebSocketDecoder:
             getattr(self, parse_fn)(pb_msg, base)
         except Exception as e:
             # 对真实 trace 中字段不稳定的消息，走 schema-free fallback
-            if method == "WebcastMemberMessage":
+            if method == "WebcastChatMessage":
+                if self._fallback_parse_chat(msg.payload, base):
+                    return base
+            elif method == "WebcastMemberMessage":
                 if self._fallback_parse_member(msg.payload, base):
                     return base
             elif method == "WebcastRoomUserSeqMessage":
@@ -294,6 +297,63 @@ class DouyinWebSocketDecoder:
             return data.decode("utf-8")
         except Exception:
             return ""
+
+    def _fallback_parse_chat(self, payload: bytes, out: DecodedMessage) -> bool:
+        fields = self._parse_raw_fields(payload)
+        if not fields:
+            return False
+
+        field_map: dict[int, list[tuple[int, Any]]] = {}
+        for fn, wt, val in fields:
+            field_map.setdefault(fn, []).append((wt, val))
+
+        common_raw = field_map.get(1, [(None, None)])[0][1]
+        if isinstance(common_raw, (bytes, bytearray)):
+            try:
+                common = pb.Common()
+                common.ParseFromString(common_raw)
+                self._fill_common(common, out)
+            except Exception:
+                pass
+
+        user_raw = field_map.get(2, [(None, None)])[0][1]
+        if isinstance(user_raw, (bytes, bytearray)):
+            user_fields = self._parse_raw_fields(user_raw)
+            for fn, wt, val in user_fields:
+                if fn == 1 and wt == 0:
+                    out.user_id = int(val)
+                elif fn in (3, 68) and wt == 2:
+                    name = self._safe_decode_utf8(val).strip()
+                    if name:
+                        out.nickname = name
+                        break
+
+        for wt, val in field_map.get(3, []):
+            if wt == 2 and isinstance(val, (bytes, bytearray)):
+                text = self._safe_decode_utf8(val).strip()
+                if text:
+                    out.content = text
+                    break
+
+        if not out.content:
+            # 保守兜底：挑选最长的可读 UTF-8 字段作为聊天文本候选，避开 user/common 子消息。
+            candidates: list[str] = []
+            for fn, items in field_map.items():
+                if fn in (1, 2):
+                    continue
+                for wt, val in items:
+                    if wt == 2 and isinstance(val, (bytes, bytearray)):
+                        text = self._safe_decode_utf8(val).strip()
+                        if text and len(text) <= 200:
+                            candidates.append(text)
+            if candidates:
+                out.content = max(candidates, key=len)
+
+        out.raw = {
+            "fallback": True,
+            "field_keys": sorted(field_map.keys()),
+        }
+        return bool(out.content or out.nickname or out.user_id)
 
     def _fallback_parse_member(self, payload: bytes, out: DecodedMessage) -> bool:
         fields = self._parse_raw_fields(payload)

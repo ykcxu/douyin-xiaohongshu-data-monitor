@@ -63,6 +63,14 @@ class Settings(BaseSettings):
 @lru_cache
 def get_settings() -> Settings:
     settings = Settings()
+
+    if not settings.app_root.is_absolute():
+        settings.app_root = (PROJECT_ROOT / settings.app_root).resolve()
+    if not settings.browser_state_dir.is_absolute():
+        settings.browser_state_dir = (settings.app_root / settings.browser_state_dir).resolve()
+    if not settings.raw_data_dir.is_absolute():
+        settings.raw_data_dir = (settings.app_root / settings.raw_data_dir).resolve()
+
     settings.browser_state_dir.mkdir(parents=True, exist_ok=True)
     settings.raw_data_dir.mkdir(parents=True, exist_ok=True)
     return settings
