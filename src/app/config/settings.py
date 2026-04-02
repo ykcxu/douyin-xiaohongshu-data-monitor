@@ -7,6 +7,10 @@ from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
+ENV_FILE = PROJECT_ROOT / ".env"
+
+
 class Settings(BaseSettings):
     app_name: str = Field(default="douyin-xiaohongshu-monitor", alias="APP_NAME")
     app_env: str = Field(default="development", alias="APP_ENV")
@@ -35,7 +39,7 @@ class Settings(BaseSettings):
     douyin_browser_headless: bool = Field(default=True, alias="DOUYIN_BROWSER_HEADLESS")
 
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=str(ENV_FILE),
         env_file_encoding="utf-8",
         case_sensitive=False,
         extra="ignore",
