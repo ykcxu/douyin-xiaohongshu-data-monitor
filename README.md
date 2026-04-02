@@ -17,6 +17,7 @@
 - [开发文档](docs/开发文档.md)
 - [API说明](docs/API说明.md)
 - [运行说明](docs/运行说明.md)
+- [抖音直播联调笔记](docs/抖音直播联调笔记.md)
 - [Ubuntu 部署说明](deploy/ubuntu/DEPLOY.md)
 
 ## Windows 本地联调
