@@ -85,32 +85,45 @@ class BrowserDouyinLiveStatusCollector(DouyinLiveStatusCollector):
                 browser.close()
 
         room_store = page_state.get("roomStore", {})
-        room_info = room_store.get("roomInfo", {})
-        
+        room_info = room_store.get("roomInfo", {}) if isinstance(room_store, dict) else {}
+        nested_room = room_info.get("room", {}) if isinstance(room_info, dict) else {}
+
         web_rid = self._normalize_text(room_info.get("web_rid") or room_info.get("roomId"))
         live_status = self._normalize_text(room_store.get("liveStatus") or page_state.get("liveStatus"))
-        
-        if web_rid is None and live_status is None:
+        room_status_code = self._extract_int(nested_room.get("status"))
+        room_status_text = self._normalize_text(nested_room.get("status_str"))
+
+        if web_rid is None and live_status is None and room_status_code is None:
             raise DouyinRoomDataUnavailable(
                 f"Could not extract roomStore data from room page for room {room.room_id}."
             )
 
-        # Determine live status
+        # Determine live status: roomInfo.room.status is more reliable than roomStore.liveStatus
         has_stream_url = bool(
             room_info.get("web_stream_url") or room_info.get("stream_url") or room_info.get("streamUrl")
         )
-        resolved_room_id = web_rid or room.room_id
-        resolved_title = self._normalize_text(room_info.get("title")) or room.live_title
-        resolved_live_status = live_status or "unknown"
-        
+        resolved_room_id = web_rid or self._normalize_text(nested_room.get("id_str")) or room.room_id
+        resolved_title = (
+            self._normalize_text(nested_room.get("title"))
+            or self._normalize_text(room_info.get("title"))
+            or room.live_title
+        )
+        resolved_live_status = room_status_text or live_status or (str(room_status_code) if room_status_code is not None else "unknown")
+
         if has_stream_url:
             is_live = True
+        elif room_status_code in {2, 4}:
+            is_live = True
         else:
-            is_live = resolved_live_status in {"live", "online"}
+            is_live = resolved_live_status in {"live", "online", "4", "2"}
 
         # Extract counts
-        online_count = self._extract_int(room_info.get("user_count") or room_info.get("userCount"))
-        like_count = self._extract_int(room_info.get("like_count") or room_info.get("likeCount"))
+        online_count = self._extract_int(
+            nested_room.get("user_count") or nested_room.get("user_count_str") or room_info.get("user_count") or room_info.get("userCount")
+        )
+        like_count = self._extract_int(
+            nested_room.get("like_count") or room_info.get("like_count") or room_info.get("likeCount")
+        )
         
         raw_payload = {
             "collector": "browser-page",

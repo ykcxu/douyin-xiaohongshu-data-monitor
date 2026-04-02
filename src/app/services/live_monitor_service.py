@@ -243,7 +243,7 @@ class LiveMonitorService:
             source_url=status.source_url or room.room_url,
             first_snapshot_time=start_time,
             last_snapshot_time=start_time,
-            raw_json=json.dumps(asdict(status), ensure_ascii=False),
+            raw_json=json.dumps(asdict(status), ensure_ascii=False, default=str),
         )
         session.add(live_session)
         session.flush()
