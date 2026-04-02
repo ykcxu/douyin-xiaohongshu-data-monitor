@@ -7,6 +7,8 @@
 当前仓库已完成项目初始化，需求与开发设计文档见：
 
 - `docs/开发文档.md`
+- `docs/API说明.md`
+- `docs/运行说明.md`
 - `deploy/ubuntu/install_dependencies.sh`
 - `deploy/ubuntu/bootstrap_server.sh`
 - `deploy/ubuntu/DEPLOY.md`
@@ -28,7 +30,7 @@ runtime/ 本地运行时数据
 copy .env.example .env
 py -3 -m pip install -e .
 py -3 -m alembic upgrade head
-py -3 src/main.py
+py -3 -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --app-dir src
 ```
 
 ## Docker 启动
@@ -44,3 +46,13 @@ docker compose up --build
 py -3 -m alembic upgrade head
 py -3 -m alembic revision -m "describe change"
 ```
+
+## 当前能力
+
+当前已经完成：
+
+- 监测账号与抖音直播间管理接口
+- 抖音直播扫描、场次、快照、弹幕查询骨架
+- 弹幕 JSONL 归档入口
+- 小红书账号、笔记、评论的查询与写入骨架
+- Playwright 登录态记录与请求上下文骨架

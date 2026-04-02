@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 
 from sqlalchemy import select
 
+from app.collector.douyin.live.exceptions import DouyinProviderError
 from app.collector.douyin.live.status_collector import (
     DouyinLiveStatusCollector,
     StubDouyinLiveStatusCollector,
@@ -16,12 +17,14 @@ from app.models.douyin_live_room import DouyinLiveRoom
 from app.models.douyin_live_session import DouyinLiveSession
 from app.models.douyin_live_snapshot import DouyinLiveSnapshot
 from app.services.jsonl_archive_service import JsonlArchiveService
+from app.services.login_state_service import LoginStateService
 
 
 class LiveMonitorService:
     def __init__(self, collector: DouyinLiveStatusCollector | None = None) -> None:
         self.collector = collector or StubDouyinLiveStatusCollector()
         self.archive_service = JsonlArchiveService()
+        self.login_state_service = LoginStateService()
 
     def scan_rooms_once(self) -> dict[str, int]:
         scanned = 0
@@ -37,7 +40,21 @@ class LiveMonitorService:
 
             for room in rooms:
                 scanned += 1
-                status = self.collector.fetch_room_status(room)
+                try:
+                    status = self.collector.fetch_room_status(room)
+                except DouyinProviderError as exc:
+                    if room.account_id:
+                        self.login_state_service.mark_state(
+                            platform="douyin",
+                            account_id=room.account_id,
+                            status="error",
+                            last_error_code=exc.__class__.__name__,
+                            last_error_message=str(exc),
+                        )
+                    room.last_live_status = "error"
+                    room.updated_at = datetime.now(timezone.utc)
+                    continue
+
                 room.last_live_status = status.live_status
                 room.nickname = status.nickname or room.nickname
                 room.live_title = status.live_title or room.live_title

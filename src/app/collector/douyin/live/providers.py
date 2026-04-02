@@ -4,6 +4,10 @@ from datetime import datetime, timezone
 
 import httpx
 
+from app.collector.douyin.live.exceptions import (
+    DouyinAuthenticationRequired,
+    DouyinProviderNotReady,
+)
 from app.collector.douyin.live.request_context import (
     DouyinLiveRequestContext,
     load_storage_state_cookies,
@@ -31,7 +35,12 @@ class HttpDouyinLiveStatusCollector(DouyinLiveStatusCollector):
         request_payload = self._build_request(room, request_context)
         now = datetime.now(timezone.utc)
 
-        raise NotImplementedError(
+        if room.account_id and not request_context.is_authenticated:
+            raise DouyinAuthenticationRequired(
+                f"Douyin login state is missing for account {room.account_id} and room {room.room_id}."
+            )
+
+        raise DouyinProviderNotReady(
             "HttpDouyinLiveStatusCollector is a placeholder. "
             f"Prepared request context for room {room.room_id}: {request_payload} at {now.isoformat()}."
         )
