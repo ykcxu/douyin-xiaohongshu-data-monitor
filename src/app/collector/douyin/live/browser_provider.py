@@ -133,6 +133,15 @@ class BrowserDouyinLiveStatusCollector(DouyinLiveStatusCollector):
             room_url=room_url,
         )
         status_payload = sidecar.get_room_status(room_id)
+        if status_payload and status_payload.get("error") == "room session inactive":
+            sidecar.stop_watching(room_id)
+            sidecar.watch_room(
+                room_id=room_id,
+                account_id=account_id,
+                platform="douyin",
+                room_url=room_url,
+            )
+            status_payload = sidecar.get_room_status(room_id)
         if not status_payload or status_payload.get("error"):
             sidecar.refresh_room(room_id)
             status_payload = sidecar.get_room_status(room_id)

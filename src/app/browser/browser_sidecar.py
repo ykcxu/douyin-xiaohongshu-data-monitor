@@ -23,6 +23,7 @@ class RoomWatchSession:
     """Represents a single room being watched."""
     room_id: str
     account_id: str
+    platform: str = "douyin"
     page: Page | None = None
     cdp_session: Any | None = None
     ws_request_ids: set[str] = field(default_factory=set)
@@ -215,8 +216,15 @@ class BrowserSidecar:
 
     def _cleanup_stale_contexts(self) -> None:
         now = datetime.now(timezone.utc)
+        active_keys = {
+            f"{session.platform}:{session.account_id}"
+            for session in self._rooms.values()
+            if session.is_active
+        }
         stale_keys: list[str] = []
         for key, entry in self._contexts.items():
+            if key in active_keys:
+                continue
             age = (now - entry.last_used).total_seconds()
             if age > self.context_ttl_seconds:
                 stale_keys.append(key)
@@ -287,10 +295,13 @@ class BrowserSidecar:
         platform: str,
         room_url: str | None,
     ) -> RoomWatchSession:
-        if room_id in self._rooms:
-            return self._rooms[room_id]
+        existing = self._rooms.get(room_id)
+        if existing is not None:
+            if existing.is_active and existing.page is not None:
+                return existing
+            self._stop_watching_impl(room_id)
 
-        session = RoomWatchSession(room_id=room_id, account_id=account_id)
+        session = RoomWatchSession(room_id=room_id, account_id=account_id, platform=platform)
         context = self._get_or_create_context(platform, account_id)
         page = context.new_page()
         cdp_session = context.new_cdp_session(page)
@@ -387,6 +398,8 @@ class BrowserSidecar:
         session = self._rooms.get(room_id)
         if session is None or session.page is None:
             return None
+        if not session.is_active:
+            return {"error": "room session inactive", "room_id": room_id}
         try:
             html = session.page.content()
             page_state = self._extract_page_state(html)
