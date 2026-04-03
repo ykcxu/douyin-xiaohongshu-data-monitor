@@ -36,7 +36,12 @@ class BrowserDouyinLiveStatusCollector(DouyinLiveStatusCollector):
         room_url = self._resolve_room_url(room)
 
         storage_state_path = None
+        login_state = None
         if room.account_id:
+            login_state = self.login_state_service.get_state(
+                platform="douyin",
+                account_id=room.account_id,
+            )
             storage_state_path = self.login_state_service.resolve_storage_state_path(
                 platform="douyin",
                 account_id=room.account_id,
@@ -45,7 +50,12 @@ class BrowserDouyinLiveStatusCollector(DouyinLiveStatusCollector):
         attempts: list[dict[str, str]] = []
         payload: dict[str, Any] | None = None
 
-        if room.account_id and storage_state_path:
+        if room.account_id and storage_state_path and getattr(login_state, "status", None) == "challenge":
+            attempts.append({
+                "mode": "authenticated-sidecar",
+                "result": "skipped:challenge-state",
+            })
+        elif room.account_id and storage_state_path:
             try:
                 payload = self._fetch_page_payload_via_sidecar(
                     room_id=room.room_id,

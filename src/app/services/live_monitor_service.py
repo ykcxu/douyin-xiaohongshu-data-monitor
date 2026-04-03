@@ -215,6 +215,10 @@ class LiveMonitorService:
             if not room.account_id:
                 self._sidecar_errors[room.room_id] = "missing account_id"
                 return
+            login_state = self.login_state_service.get_state(platform="douyin", account_id=room.account_id)
+            if login_state is not None and login_state.status == "challenge":
+                self._sidecar_errors[room.room_id] = "skipped:challenge-state"
+                return
             self._get_sidecar().watch_room(
                 room_id=room.room_id,
                 account_id=room.account_id,
