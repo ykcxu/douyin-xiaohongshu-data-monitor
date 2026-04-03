@@ -8,7 +8,8 @@ from typing import Any
 from playwright.sync_api import sync_playwright
 
 from app.browser.browser_sidecar import get_browser_sidecar
-from app.collector.douyin.live.exceptions import DouyinRoomDataUnavailable
+from app.browser.cdp_websocket_trace import attach_cdp_websocket_trace
+from app.collector.douyin.live.exceptions import DouyinChallengePageError, DouyinRoomDataUnavailable
 from app.collector.douyin.live.status_collector import DouyinLiveStatusCollector, LiveRoomStatus
 from app.models.douyin_live_room import DouyinLiveRoom
 from app.services.login_state_service import LoginStateService
@@ -52,6 +53,19 @@ class BrowserDouyinLiveStatusCollector(DouyinLiveStatusCollector):
                     account_id=room.account_id,
                 )
                 attempts.append({"mode": "authenticated-sidecar", "result": "ok"})
+            except DouyinChallengePageError as e:
+                self.login_state_service.mark_state(
+                    platform="douyin",
+                    account_id=room.account_id,
+                    status="challenge",
+                    last_error_code=type(e).__name__,
+                    last_error_message=str(e),
+                )
+                attempts.append({
+                    "mode": "authenticated-sidecar",
+                    "result": "challenge",
+                    "message": str(e),
+                })
             except Exception as e:
                 attempts.append({
                     "mode": "authenticated-sidecar",
@@ -147,6 +161,17 @@ class BrowserDouyinLiveStatusCollector(DouyinLiveStatusCollector):
             status_payload = sidecar.get_room_status(room_id)
         if not status_payload:
             raise DouyinRoomDataUnavailable(f"Empty sidecar status payload for room {room_id}")
+
+        page_state = status_payload.get("status") if isinstance(status_payload, dict) else None
+        if isinstance(page_state, dict):
+            page_title = self._normalize_text(page_state.get("pageTitle"))
+            body_text = self._normalize_text(page_state.get("bodyText"))
+            if self._is_challenge_page(page_title=page_title, body_text=body_text):
+                sidecar.stop_watching(room_id)
+                raise DouyinChallengePageError(
+                    f"Authenticated sidecar hit challenge page for room {room_id}: {page_title or 'challenge'}"
+                )
+
         status_payload["mode"] = "authenticated-sidecar"
         return status_payload
 
@@ -155,6 +180,35 @@ class BrowserDouyinLiveStatusCollector(DouyinLiveStatusCollector):
             browser = p.chromium.launch(headless=self.headless)
             context = browser.new_context()
             page = context.new_page()
+            cdp_session = context.new_cdp_session(page)
+            websocket_urls: list[str] = []
+            websocket_frames: list[dict[str, Any]] = []
+
+            def on_page_websocket(websocket) -> None:
+                try:
+                    url = str(websocket.url)
+                    if url and url not in websocket_urls:
+                        websocket_urls.append(url)
+                except Exception:
+                    pass
+
+            def emit_cdp(payload: dict[str, object]) -> None:
+                try:
+                    event_name = str(payload.get("event") or "")
+                    if event_name == "cdp_websocket_created":
+                        url = str(payload.get("url") or "")
+                        if url and url not in websocket_urls:
+                            websocket_urls.append(url)
+                        return
+                    if event_name in {"cdp_websocket_frame_received", "cdp_websocket_frame_sent"}:
+                        websocket_frames.append(dict(payload))
+                    if len(websocket_frames) > 200:
+                        del websocket_frames[:-200]
+                except Exception:
+                    pass
+
+            page.on("websocket", on_page_websocket)
+            attach_cdp_websocket_trace(cdp_session, emit=emit_cdp)
             try:
                 page.goto(room_url, wait_until="domcontentloaded", timeout=self.timeout_seconds * 1000)
                 page.wait_for_timeout(4000)
@@ -166,7 +220,8 @@ class BrowserDouyinLiveStatusCollector(DouyinLiveStatusCollector):
                     "status": page_state,
                     "title": page.title(),
                     "url": page.url,
-                    "websocket_frames_count": 0,
+                    "websocket_frames_count": len(websocket_frames),
+                    "websocket_urls": websocket_urls[:20],
                 }
                 return payload
             finally:

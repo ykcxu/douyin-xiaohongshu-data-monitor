@@ -405,26 +405,31 @@ class BrowserSidecar:
             page_state = self._extract_page_state(html)
 
             try:
-                js_room_store = session.page.evaluate(
+                js_state = session.page.evaluate(
                     """() => {
-                        if (window.roomStore) return window.roomStore;
-                        return null;
+                        const store = window.__STORE__ || null;
+                        const roomStore = window.roomStore || store?.roomStore || null;
+                        const header = window.defaultHeaderUserInfo || store?.userStore?.defaultHeaderUserInfo || null;
+                        return {
+                            pageTitle: document.title || '',
+                            bodyText: document.body && document.body.innerText ? document.body.innerText.slice(0, 4000) : '',
+                            roomStore,
+                            defaultHeaderUserInfo: header,
+                            storeKeys: store ? Object.keys(store).slice(0, 40) : [],
+                        };
                     }"""
                 )
-                if js_room_store:
-                    page_state["roomStore"] = js_room_store
-            except Exception:
-                pass
-
-            try:
-                js_user_info = session.page.evaluate(
-                    """() => {
-                        if (window.defaultHeaderUserInfo) return window.defaultHeaderUserInfo;
-                        return null;
-                    }"""
-                )
-                if js_user_info and "defaultHeaderUserInfo" not in page_state:
-                    page_state["defaultHeaderUserInfo"] = js_user_info
+                if isinstance(js_state, dict):
+                    if isinstance(js_state.get("roomStore"), dict):
+                        page_state["roomStore"] = js_state["roomStore"]
+                    if isinstance(js_state.get("defaultHeaderUserInfo"), dict):
+                        page_state["defaultHeaderUserInfo"] = js_state["defaultHeaderUserInfo"]
+                    if js_state.get("pageTitle"):
+                        page_state["pageTitle"] = js_state["pageTitle"]
+                    if js_state.get("bodyText"):
+                        page_state["bodyText"] = js_state["bodyText"]
+                    if js_state.get("storeKeys"):
+                        page_state["storeKeys"] = js_state["storeKeys"]
             except Exception:
                 pass
 
@@ -435,6 +440,7 @@ class BrowserSidecar:
                 "status": page_state,
                 "last_update": session.last_update.isoformat(),
                 "websocket_frames_count": len(session.websocket_frames),
+                "websocket_urls": list(session.ws_request_urls.values())[:20],
             }
         except Exception as e:
             return {"error": str(e), "room_id": room_id}

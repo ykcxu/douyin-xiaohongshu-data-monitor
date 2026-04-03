@@ -12,3 +12,7 @@ class DouyinProviderNotReady(DouyinProviderError):
 
 class DouyinRoomDataUnavailable(DouyinProviderError):
     """Raised when a room page is reachable but the expected room data cannot be extracted."""
+
+
+class DouyinChallengePageError(DouyinProviderError):
+    """Raised when the page lands on a captcha / challenge interstitial."""
