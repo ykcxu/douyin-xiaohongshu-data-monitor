@@ -4,6 +4,7 @@ import base64
 import json
 from dataclasses import asdict
 from datetime import datetime, timezone
+from pathlib import Path
 
 from sqlalchemy import select
 
@@ -349,7 +350,7 @@ class LiveMonitorService:
             source_url=status.source_url or room.room_url,
             first_snapshot_time=start_time,
             last_snapshot_time=start_time,
-            raw_json=json.dumps(asdict(status), ensure_ascii=False, default=str),
+            raw_json=self._safe_json_dumps(status),
         )
         session.add(live_session)
         session.flush()
@@ -384,7 +385,7 @@ class LiveMonitorService:
             like_count=status.like_count,
             comment_count=status.comment_count,
             share_count=status.share_count,
-            raw_json=json.dumps(status.raw_payload, ensure_ascii=False),
+            raw_json=self._safe_json_dumps(status.raw_payload),
         )
         session.add(snapshot)
         live_session.last_snapshot_time = status.fetched_at
@@ -498,6 +499,54 @@ class LiveMonitorService:
             share_count=self._parse_int(payload.get("share_count")),
             raw_payload=payload,
         )
+
+    def _safe_json_dumps(self, value: object) -> str:
+        return json.dumps(self._make_json_safe(value), ensure_ascii=False, default=str)
+
+    def _make_json_safe(self, value: object, seen: set[int] | None = None):
+        if seen is None:
+            seen = set()
+
+        if value is None or isinstance(value, (str, int, float, bool)):
+            return value
+        if isinstance(value, datetime):
+            return value.isoformat()
+        if isinstance(value, Path):
+            return str(value)
+
+        obj_id = id(value)
+        if obj_id in seen:
+            return "[circular]"
+
+        if isinstance(value, dict):
+            seen.add(obj_id)
+            result = {str(k): self._make_json_safe(v, seen) for k, v in value.items()}
+            seen.remove(obj_id)
+            return result
+
+        if isinstance(value, (list, tuple, set)):
+            seen.add(obj_id)
+            result = [self._make_json_safe(v, seen) for v in value]
+            seen.remove(obj_id)
+            return result
+
+        if hasattr(value, "isoformat") and callable(getattr(value, "isoformat")):
+            try:
+                return value.isoformat()
+            except Exception:
+                pass
+
+        if hasattr(value, "__dict__"):
+            seen.add(obj_id)
+            result = {
+                str(k): self._make_json_safe(v, seen)
+                for k, v in vars(value).items()
+                if not str(k).startswith("_")
+            }
+            seen.remove(obj_id)
+            return result
+
+        return str(value)
 
     def _parse_datetime(self, value: object) -> datetime | None:
         if isinstance(value, datetime):
