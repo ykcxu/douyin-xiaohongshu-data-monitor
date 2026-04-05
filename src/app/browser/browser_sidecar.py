@@ -391,6 +391,21 @@ class BrowserSidecar:
             frames = [f for f in frames if f.get("direction") == direction]
         return frames, len(session.websocket_frames)
 
+    def get_room_meta(self, room_id: str) -> dict[str, Any] | None:
+        return self._run_on_owner(lambda: self._get_room_meta_impl(room_id), timeout=5)
+
+    def _get_room_meta_impl(self, room_id: str) -> dict[str, Any] | None:
+        session = self._rooms.get(room_id)
+        if session is None:
+            return None
+        return {
+            "room_id": room_id,
+            "is_active": session.is_active,
+            "last_update": session.last_update.isoformat() if session.last_update else None,
+            "websocket_frames_count": len(session.websocket_frames),
+            "websocket_urls": list(session.ws_request_urls.values())[:20],
+        }
+
     def get_room_status(self, room_id: str) -> dict[str, Any] | None:
         return self._run_on_owner(lambda: self._get_room_status_impl(room_id))
 

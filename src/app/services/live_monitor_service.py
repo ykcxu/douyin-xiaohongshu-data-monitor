@@ -253,8 +253,8 @@ class LiveMonitorService:
                 if after_cursor > before_cursor:
                     ingested_rooms += 1
 
-                current_status = self._get_sidecar().get_room_status(room.room_id)
-                if current_status and current_status.get("error") == "room session inactive":
+                current_meta = self._get_sidecar().get_room_meta(room.room_id)
+                if current_meta and not current_meta.get("is_active", True):
                     self._stop_sidecar_watch(room.room_id)
                     stopped_rooms += 1
 
