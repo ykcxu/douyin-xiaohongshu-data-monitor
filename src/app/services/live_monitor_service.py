@@ -122,6 +122,9 @@ class LiveMonitorService:
     def scan_rooms_once(self) -> dict[str, int]:
         scanned = 0
         live_count = 0
+        opened_sessions = 0
+        closed_sessions = 0
+        snapshots_created = 0
 
         with get_db_session() as session:
             stmt = (
@@ -158,17 +161,24 @@ class LiveMonitorService:
                     live_count += 1
                     if active_session is None:
                         active_session = self._open_session(session, room, status)
+                        opened_sessions += 1
                     room.last_live_start_time = status.fetched_at
                     self._create_snapshot(session, room, active_session, status)
-                    self._ensure_sidecar_watch(room)
-                    self._ingest_sidecar_messages(room, active_session)
+                    snapshots_created += 1
                 elif active_session is not None:
                     self._close_session(session, room, active_session, status.fetched_at)
                     self._stop_sidecar_watch(room.room_id)
+                    closed_sessions += 1
 
                 room.updated_at = datetime.now(timezone.utc)
 
-        return {"scanned": scanned, "live_count": live_count}
+        return {
+            "scanned": scanned,
+            "live_count": live_count,
+            "opened_sessions": opened_sessions,
+            "closed_sessions": closed_sessions,
+            "snapshots_created": snapshots_created,
+        }
 
     def ingest_status_sample(
         self,
