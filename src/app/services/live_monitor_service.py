@@ -44,6 +44,16 @@ class LiveMonitorService:
         stats["sidecar_errors"] = dict(self._sidecar_errors)
         return stats
 
+    def get_watcher_stats(self) -> dict[str, object]:
+        with get_db_session() as session:
+            active_live_sessions = session.execute(
+                select(DouyinLiveSession).where(DouyinLiveSession.status == "live")
+            ).scalars().all()
+        stats = self.get_sidecar_stats()
+        stats["active_live_sessions"] = len(active_live_sessions)
+        stats["active_live_room_ids"] = [item.room_id for item in active_live_sessions[:50]]
+        return stats
+
     def debug_decode_room_frames(self, room_id: str, limit: int = 5) -> dict[str, object]:
         frames, cursor = self._get_sidecar().get_websocket_frames(room_id, since=0, direction="received")
         recent = frames[-limit:] if limit > 0 else frames
