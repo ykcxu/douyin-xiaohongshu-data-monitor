@@ -311,8 +311,8 @@ class BrowserSidecar:
         self._setup_websocket_monitoring(session)
 
         url = room_url or f"https://live.douyin.com/{room_id}"
-        page.goto(url, wait_until="domcontentloaded", timeout=30000)
-        page.wait_for_timeout(3000)
+        page.goto(url, wait_until="domcontentloaded", timeout=15000)
+        page.wait_for_timeout(1000)
 
         session.page = page
         session.last_update = datetime.now(timezone.utc)

@@ -251,6 +251,8 @@ class LiveMonitorService:
         watched = 0
         ingested_rooms = 0
         stopped_rooms = 0
+        newly_watched = 0
+        max_new_rooms = max(0, int(getattr(self.settings, "douyin_watcher_max_new_rooms_per_tick", 1) or 0))
 
         with get_db_session() as session:
             stmt = (
@@ -263,14 +265,25 @@ class LiveMonitorService:
 
             for live_session, room in rows:
                 watched += 1
-                self._ensure_sidecar_watch(room)
+                already_watching = room.room_id in self._room_frame_cursors
+                current_meta = None
+                if not already_watching:
+                    if newly_watched >= max_new_rooms:
+                        continue
+                    self._ensure_sidecar_watch(room)
+                    current_meta = self._get_sidecar().get_room_meta(room.room_id)
+                    if current_meta is None:
+                        continue
+                    self._room_frame_cursors.setdefault(room.room_id, 0)
+                    newly_watched += 1
+
                 before_cursor = self._room_frame_cursors.get(room.room_id, 0)
                 self._ingest_sidecar_messages(room, live_session)
                 after_cursor = self._room_frame_cursors.get(room.room_id, before_cursor)
                 if after_cursor > before_cursor:
                     ingested_rooms += 1
 
-                current_meta = self._get_sidecar().get_room_meta(room.room_id)
+                current_meta = current_meta or self._get_sidecar().get_room_meta(room.room_id)
                 if current_meta and not current_meta.get("is_active", True):
                     self._stop_sidecar_watch(room.room_id)
                     stopped_rooms += 1
@@ -279,6 +292,7 @@ class LiveMonitorService:
             "watched": watched,
             "ingested_rooms": ingested_rooms,
             "stopped_rooms": stopped_rooms,
+            "newly_watched": newly_watched,
         }
 
     def _ensure_sidecar_watch(self, room: DouyinLiveRoom) -> None:

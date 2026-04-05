@@ -38,6 +38,7 @@ class Settings(BaseSettings):
     douyin_live_provider: str = Field(default="stub", alias="DOUYIN_LIVE_PROVIDER")
     douyin_browser_headless: bool = Field(default=True, alias="DOUYIN_BROWSER_HEADLESS")
     douyin_challenge_retry_seconds: int = Field(default=900, alias="DOUYIN_CHALLENGE_RETRY_SECONDS")
+    douyin_watcher_max_new_rooms_per_tick: int = Field(default=1, alias="DOUYIN_WATCHER_MAX_NEW_ROOMS_PER_TICK")
 
     model_config = SettingsConfigDict(
         env_file=str(ENV_FILE),
