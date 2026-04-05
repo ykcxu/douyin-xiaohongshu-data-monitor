@@ -6,6 +6,7 @@ from dataclasses import asdict
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from google.protobuf.json_format import MessageToDict
 from sqlalchemy import select
 
 from app.browser.browser_sidecar import get_browser_sidecar
