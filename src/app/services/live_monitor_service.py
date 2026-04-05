@@ -36,6 +36,7 @@ class LiveMonitorService:
         self.ws_decoder = DouyinWebSocketDecoder()
         self._room_frame_cursors: dict[str, int] = {}
         self._sidecar_errors: dict[str, str] = {}
+        self._watcher_room_offset = 0
 
     def _get_sidecar(self):
         return get_browser_sidecar()
@@ -286,8 +287,15 @@ class LiveMonitorService:
                 .order_by(DouyinLiveSession.start_time.asc())
             )
             rows = session.execute(stmt).all()
+            if rows:
+                offset = self._watcher_room_offset % len(rows)
+                ordered_rows = rows[offset:] + rows[:offset]
+                self._watcher_room_offset = (offset + max_rooms) % len(rows)
+            else:
+                ordered_rows = []
+                self._watcher_room_offset = 0
 
-            for live_session, room in rows:
+            for live_session, room in ordered_rows:
                 if watched >= max_rooms:
                     break
                 watched += 1
