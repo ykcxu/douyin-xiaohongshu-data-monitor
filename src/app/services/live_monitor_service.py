@@ -15,6 +15,7 @@ from app.collector.douyin.live.status_collector import (
     StubDouyinLiveStatusCollector,
 )
 from app.collector.douyin.live.websocket_decoder import DouyinWebSocketDecoder
+from app.config.settings import get_settings
 from app.db.session import get_db_session
 from app.models.douyin_live_comment import DouyinLiveComment
 from app.models.douyin_live_room import DouyinLiveRoom
@@ -217,8 +218,15 @@ class LiveMonitorService:
                 return
             login_state = self.login_state_service.get_state(platform="douyin", account_id=room.account_id)
             if login_state is not None and login_state.status == "challenge":
-                self._sidecar_errors[room.room_id] = "skipped:challenge-state"
-                return
+                updated_at = getattr(login_state, "updated_at", None)
+                retry_after_seconds = None
+                if updated_at is not None:
+                    retry_at = updated_at + timedelta(seconds=900)
+                    retry_after_seconds = int((retry_at - datetime.now(timezone.utc)).total_seconds())
+                if retry_after_seconds is None or retry_after_seconds > 0:
+                    suffix = f":retry-after={retry_after_seconds}" if retry_after_seconds is not None else ""
+                    self._sidecar_errors[room.room_id] = f"skipped:challenge-state{suffix}"
+                    return
             self._get_sidecar().watch_room(
                 room_id=room.room_id,
                 account_id=room.account_id,

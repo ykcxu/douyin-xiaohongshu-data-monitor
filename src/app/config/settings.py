@@ -37,6 +37,7 @@ class Settings(BaseSettings):
     live_snapshot_poll_seconds: int = Field(default=30, alias="LIVE_SNAPSHOT_POLL_SECONDS")
     douyin_live_provider: str = Field(default="stub", alias="DOUYIN_LIVE_PROVIDER")
     douyin_browser_headless: bool = Field(default=True, alias="DOUYIN_BROWSER_HEADLESS")
+    douyin_challenge_retry_seconds: int = Field(default=900, alias="DOUYIN_CHALLENGE_RETRY_SECONDS")
 
     model_config = SettingsConfigDict(
         env_file=str(ENV_FILE),

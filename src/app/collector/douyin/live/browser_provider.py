@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from playwright.sync_api import sync_playwright
@@ -26,9 +26,15 @@ class BrowserDouyinLiveStatusCollector(DouyinLiveStatusCollector):
        `window.__STORE__.roomStore`), with HTML parsing as a best-effort fallback.
     """
 
-    def __init__(self, timeout_seconds: int = 30, headless: bool = True) -> None:
+    def __init__(
+        self,
+        timeout_seconds: int = 30,
+        headless: bool = True,
+        challenge_retry_seconds: int = 900,
+    ) -> None:
         self.timeout_seconds = timeout_seconds
         self.headless = headless
+        self.challenge_retry_seconds = challenge_retry_seconds
         self.login_state_service = LoginStateService()
 
     def fetch_room_status(self, room: DouyinLiveRoom) -> LiveRoomStatus:
@@ -49,11 +55,20 @@ class BrowserDouyinLiveStatusCollector(DouyinLiveStatusCollector):
 
         attempts: list[dict[str, str]] = []
         payload: dict[str, Any] | None = None
+        should_retry_authenticated = self._should_retry_authenticated(login_state=login_state, now=now)
 
-        if room.account_id and storage_state_path and getattr(login_state, "status", None) == "challenge":
+        if (
+            room.account_id
+            and storage_state_path
+            and getattr(login_state, "status", None) == "challenge"
+            and not should_retry_authenticated
+        ):
             attempts.append({
                 "mode": "authenticated-sidecar",
                 "result": "skipped:challenge-state",
+                "retry_after_seconds": str(
+                    self._challenge_retry_remaining(login_state=login_state, now=now) or 0
+                ),
             })
         elif room.account_id and storage_state_path:
             try:
@@ -85,8 +100,7 @@ class BrowserDouyinLiveStatusCollector(DouyinLiveStatusCollector):
 
         if not self._has_usable_room_data(payload):
             try:
-                anonymous_payload = self._fetch_page_payload_anonymous(room_url=room_url)
-                payload = anonymous_payload
+                payload = self._fetch_page_payload_anonymous(room_url=room_url)
                 attempts.append({"mode": "anonymous-browser", "result": "ok"})
             except Exception as e:
                 attempts.append({
@@ -122,11 +136,13 @@ class BrowserDouyinLiveStatusCollector(DouyinLiveStatusCollector):
 
         if room.account_id and storage_state_path:
             try:
-                payloads.append(self._fetch_page_payload_via_sidecar(
-                    room_id=room.room_id,
-                    room_url=room_url,
-                    account_id=room.account_id,
-                ))
+                payloads.append(
+                    self._fetch_page_payload_via_sidecar(
+                        room_id=room.room_id,
+                        room_url=room_url,
+                        account_id=room.account_id,
+                    )
+                )
             except Exception as e:
                 payloads.append({"mode": "authenticated-sidecar", "error": f"{type(e).__name__}: {e}"})
 
@@ -224,7 +240,7 @@ class BrowserDouyinLiveStatusCollector(DouyinLiveStatusCollector):
                 page.wait_for_timeout(4000)
                 html = page.content()
                 page_state = self._extract_page_state_from_browser(page=page, html=html)
-                payload = {
+                return {
                     "mode": "anonymous-browser",
                     "room_id": self._extract_room_id_from_url(page.url),
                     "status": page_state,
@@ -233,7 +249,6 @@ class BrowserDouyinLiveStatusCollector(DouyinLiveStatusCollector):
                     "websocket_frames_count": len(websocket_frames),
                     "websocket_urls": websocket_urls[:20],
                 }
-                return payload
             finally:
                 context.close()
                 browser.close()
@@ -288,7 +303,11 @@ class BrowserDouyinLiveStatusCollector(DouyinLiveStatusCollector):
         resolved_nickname = (
             self._extract_nickname(page_state)
             or self._normalize_text(room_info.get("nickname"))
-            or self._normalize_text((nested_room.get("owner") or {}).get("nickname") if isinstance(nested_room.get("owner"), dict) else None)
+            or self._normalize_text(
+                (nested_room.get("owner") or {}).get("nickname")
+                if isinstance(nested_room.get("owner"), dict)
+                else None
+            )
             or self._extract_anchor_name_from_body(body_text)
             or room.nickname
         )
@@ -346,6 +365,7 @@ class BrowserDouyinLiveStatusCollector(DouyinLiveStatusCollector):
                 "account_id": room.account_id,
                 "storage_state_path": str(storage_state_path) if storage_state_path else None,
                 "headless": self.headless,
+                "challenge_retry_seconds": self.challenge_retry_seconds,
             },
             "mode": payload.get("mode"),
             "attempts": attempts,
@@ -508,16 +528,36 @@ class BrowserDouyinLiveStatusCollector(DouyinLiveStatusCollector):
         if not candidates:
             return None
 
-        def score(candidate: dict[str, Any]) -> tuple[int, int]:
+        def score(candidate: dict[str, Any]) -> tuple[int, int, int]:
             room_info = candidate.get("roomInfo")
             if not isinstance(room_info, dict):
-                return (0, len(candidate))
+                return (0, 0, len(candidate))
             web_rid = room_info.get("web_rid") or room_info.get("roomId")
             nested_room = room_info.get("room") if isinstance(room_info.get("room"), dict) else {}
             user_count = nested_room.get("user_count") or room_info.get("user_count")
             return (1 if web_rid else 0, 1 if user_count else 0, len(candidate))
 
         return max(candidates, key=score)
+
+    def _should_retry_authenticated(self, *, login_state: Any, now: datetime) -> bool:
+        if login_state is None:
+            return True
+        if getattr(login_state, "status", None) != "challenge":
+            return True
+        updated_at = getattr(login_state, "updated_at", None)
+        if updated_at is None:
+            return False
+        return now - updated_at >= timedelta(seconds=self.challenge_retry_seconds)
+
+    def _challenge_retry_remaining(self, *, login_state: Any, now: datetime) -> int | None:
+        if login_state is None:
+            return None
+        updated_at = getattr(login_state, "updated_at", None)
+        if updated_at is None:
+            return None
+        retry_at = updated_at + timedelta(seconds=self.challenge_retry_seconds)
+        remaining = int((retry_at - now).total_seconds())
+        return remaining if remaining > 0 else 0
 
     def _extract_nickname(self, page_state: dict[str, Any]) -> str | None:
         default_header = page_state.get("defaultHeaderUserInfo")
@@ -532,9 +572,9 @@ class BrowserDouyinLiveStatusCollector(DouyinLiveStatusCollector):
         if isinstance(room_store, dict):
             room_info = room_store.get("roomInfo")
             if isinstance(room_info, dict):
-                room = room_info.get("room")
-                if isinstance(room, dict):
-                    owner = room.get("owner")
+                room_nested = room_info.get("room")
+                if isinstance(room_nested, dict):
+                    owner = room_nested.get("owner")
                     if isinstance(owner, dict):
                         nickname = self._normalize_text(owner.get("nickname"))
                         if nickname:
