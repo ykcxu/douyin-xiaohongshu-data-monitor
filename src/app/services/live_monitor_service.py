@@ -196,8 +196,6 @@ class LiveMonitorService:
                     active_session = self._open_session(session, room, status)
                 room.last_live_start_time = status.fetched_at
                 self._create_snapshot(session, room, active_session, status)
-                self._ensure_sidecar_watch(room)
-                self._ingest_sidecar_messages(room, active_session)
             elif active_session is not None:
                 self._close_session(session, room, active_session, status.fetched_at)
                 self._stop_sidecar_watch(room.room_id)
@@ -211,6 +209,40 @@ class LiveMonitorService:
                 "live_count": live_count,
                 "live_status": status.live_status,
             }
+
+    def watcher_tick_once(self) -> dict[str, int]:
+        watched = 0
+        ingested_rooms = 0
+        stopped_rooms = 0
+
+        with get_db_session() as session:
+            stmt = (
+                select(DouyinLiveSession, DouyinLiveRoom)
+                .join(DouyinLiveRoom, DouyinLiveRoom.id == DouyinLiveSession.live_room_id)
+                .where(DouyinLiveSession.status == "live")
+                .order_by(DouyinLiveSession.start_time.asc())
+            )
+            rows = session.execute(stmt).all()
+
+            for live_session, room in rows:
+                watched += 1
+                self._ensure_sidecar_watch(room)
+                before_cursor = self._room_frame_cursors.get(room.room_id, 0)
+                self._ingest_sidecar_messages(room, live_session)
+                after_cursor = self._room_frame_cursors.get(room.room_id, before_cursor)
+                if after_cursor > before_cursor:
+                    ingested_rooms += 1
+
+                current_status = self._get_sidecar().get_room_status(room.room_id)
+                if current_status and current_status.get("error") == "room session inactive":
+                    self._stop_sidecar_watch(room.room_id)
+                    stopped_rooms += 1
+
+        return {
+            "watched": watched,
+            "ingested_rooms": ingested_rooms,
+            "stopped_rooms": stopped_rooms,
+        }
 
     def _ensure_sidecar_watch(self, room: DouyinLiveRoom) -> None:
         try:

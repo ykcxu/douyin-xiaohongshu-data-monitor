@@ -9,6 +9,19 @@ settings = get_settings()
 
 @router.get("/status")
 def system_status() -> dict[str, object]:
+    jobs = []
+    try:
+        jobs = [
+            {
+                "id": job.id,
+                "name": job.name,
+                "next_run_time": job.next_run_time.isoformat() if job.next_run_time else None,
+            }
+            for job in scheduler_runtime.scheduler.get_jobs()
+        ]
+    except Exception:
+        jobs = []
+
     return {
         "app_name": settings.app_name,
         "app_env": settings.app_env,
@@ -21,4 +34,5 @@ def system_status() -> dict[str, object]:
         "raw_data_dir_exists": settings.raw_data_dir.exists(),
         "live_status_poll_seconds": settings.live_status_poll_seconds,
         "live_snapshot_poll_seconds": settings.live_snapshot_poll_seconds,
+        "scheduler_jobs": jobs,
     }

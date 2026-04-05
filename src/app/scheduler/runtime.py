@@ -28,6 +28,15 @@ class SchedulerRuntime:
             max_instances=1,
             coalesce=True,
         )
+        self.scheduler.add_job(
+            self.live_monitor_service.watcher_tick_once,
+            trigger=IntervalTrigger(seconds=self.settings.live_snapshot_poll_seconds),
+            id="douyin_live_watcher_tick",
+            name="Douyin Live Watcher Tick",
+            replace_existing=True,
+            max_instances=1,
+            coalesce=True,
+        )
         self._configured = True
 
     def start(self) -> None:
