@@ -40,8 +40,29 @@ class LiveMonitorService:
     def _get_sidecar(self):
         return get_browser_sidecar()
 
+    def _safe_get_sidecar_stats(self) -> dict[str, object]:
+        try:
+            return self._get_sidecar().get_stats()
+        except Exception as exc:
+            return {
+                "running": False,
+                "contexts_count": 0,
+                "rooms_count": 0,
+                "contexts": [],
+                "rooms": [],
+                "stats_error": f"{type(exc).__name__}: {exc}",
+            }
+
+    def _safe_get_room_meta(self, room_id: str) -> dict[str, object] | None:
+        try:
+            return self._get_sidecar().get_room_meta(room_id)
+        except Exception as exc:
+            self._sidecar_errors[room_id] = f"room-meta {type(exc).__name__}: {exc}"
+            print(f"[sidecar-room-meta-error] room_id={room_id} error={type(exc).__name__}: {exc}")
+            return None
+
     def get_sidecar_stats(self) -> dict[str, object]:
-        stats = self._get_sidecar().get_stats()
+        stats = self._safe_get_sidecar_stats()
         stats["frame_cursors"] = dict(self._room_frame_cursors)
         stats["sidecar_errors"] = dict(self._sidecar_errors)
         return stats
@@ -102,7 +123,7 @@ class LiveMonitorService:
                 "methods": [m.method for m in result.messages[:20]],
                 **push_meta,
             })
-        stats = self._get_sidecar().get_stats()
+        stats = self._safe_get_sidecar_stats()
         room_stats = next((x for x in stats.get("rooms", []) if x.get("room_id") == room_id), {})
         return {
             "room_id": room_id,
@@ -276,7 +297,7 @@ class LiveMonitorService:
                     if newly_watched >= max_new_rooms:
                         continue
                     self._ensure_sidecar_watch(room)
-                    current_meta = self._get_sidecar().get_room_meta(room.room_id)
+                    current_meta = self._safe_get_room_meta(room.room_id)
                     if current_meta is None:
                         continue
                     self._room_frame_cursors.setdefault(room.room_id, 0)
@@ -288,7 +309,7 @@ class LiveMonitorService:
                 if after_cursor > before_cursor:
                     ingested_rooms += 1
 
-                current_meta = current_meta or self._get_sidecar().get_room_meta(room.room_id)
+                current_meta = current_meta or self._safe_get_room_meta(room.room_id)
                 if current_meta and not current_meta.get("is_active", True):
                     self._stop_sidecar_watch(room.room_id)
                     stopped_rooms += 1
