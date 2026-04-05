@@ -30,6 +30,7 @@ class LiveMonitorService:
         self.collector = collector or StubDouyinLiveStatusCollector()
         self.archive_service = JsonlArchiveService()
         self.login_state_service = LoginStateService()
+        self.settings = get_settings()
         self.ws_decoder = DouyinWebSocketDecoder()
         self._room_frame_cursors: dict[str, int] = {}
         self._sidecar_errors: dict[str, str] = {}
