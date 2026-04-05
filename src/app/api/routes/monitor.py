@@ -1,10 +1,9 @@
 from fastapi import APIRouter
 
-from app.collector.douyin.live.factory import create_douyin_live_status_collector
-from app.services.live_monitor_service import LiveMonitorService
+from app.scheduler.runtime import scheduler_runtime
 
 router = APIRouter(prefix="/monitor", tags=["monitor"])
-live_monitor_service = LiveMonitorService(create_douyin_live_status_collector())
+live_monitor_service = scheduler_runtime.live_monitor_service
 
 
 @router.post("/douyin/live/scan")

@@ -14,6 +14,7 @@ from app.collector.douyin.live.status_collector import (
     DouyinLiveStatusCollector,
     StubDouyinLiveStatusCollector,
 )
+from app.collector.douyin.live.proto import douyin_webcast_pb2 as pb
 from app.collector.douyin.live.websocket_decoder import DouyinWebSocketDecoder
 from app.config.settings import get_settings
 from app.db.session import get_db_session
@@ -71,6 +72,21 @@ class LiveMonitorService:
                 raw_prefix_hex = raw[:24].hex()
             except Exception:
                 pass
+            push_meta: dict[str, object] = {}
+            try:
+                push_frame = pb.PushFrame()
+                push_frame.ParseFromString(raw)
+                payload_preview_bytes = bytes(push_frame.payload[:120])
+                payload_preview_text = payload_preview_bytes.decode("utf-8", errors="replace")
+                push_meta = {
+                    "push_payload_type": push_frame.payloadType,
+                    "push_payload_encoding": push_frame.payloadEncoding,
+                    "push_payload_len": len(push_frame.payload),
+                    "push_payload_preview_text": payload_preview_text,
+                    "push_headers": MessageToDict(push_frame).get("headersList", [])[:10],
+                }
+            except Exception as inspect_error:
+                push_meta = {"push_inspect_error": str(inspect_error)}
             decoded_items.append({
                 "timestamp": frame.get("timestamp"),
                 "request_id": frame.get("request_id"),
@@ -82,6 +98,7 @@ class LiveMonitorService:
                 "error": result.error,
                 "message_count": len(result.messages),
                 "methods": [m.method for m in result.messages[:20]],
+                **push_meta,
             })
         stats = self._get_sidecar().get_stats()
         room_stats = next((x for x in stats.get("rooms", []) if x.get("room_id") == room_id), {})
