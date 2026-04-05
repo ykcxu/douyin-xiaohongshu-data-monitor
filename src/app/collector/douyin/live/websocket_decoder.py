@@ -121,6 +121,17 @@ class DouyinWebSocketDecoder:
             need_ack=False,
         )
 
+        # text/json 控制帧：不是业务 protobuf 消息，直接按已识别控制帧返回
+        if (push_frame.payloadType or "").lower() == "text/json":
+            try:
+                payload_obj = json.loads(push_frame.payload.decode(push_frame.payloadEncoding or "utf-8", errors="replace"))
+            except Exception as e:
+                result.error = f"JSON 控制帧解析失败: {e}"
+                return result
+            result.error = "control_json"
+            result.messages = []
+            return result
+
         # 解压 payload
         try:
             decompressed = gzip.decompress(push_frame.payload)
