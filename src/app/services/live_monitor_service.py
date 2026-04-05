@@ -3,7 +3,7 @@ from __future__ import annotations
 import base64
 import json
 from dataclasses import asdict
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from sqlalchemy import select
@@ -221,7 +221,7 @@ class LiveMonitorService:
                 updated_at = getattr(login_state, "updated_at", None)
                 retry_after_seconds = None
                 if updated_at is not None:
-                    retry_at = updated_at + timedelta(seconds=900)
+                    retry_at = updated_at + timedelta(seconds=self.settings.douyin_challenge_retry_seconds)
                     retry_after_seconds = int((retry_at - datetime.now(timezone.utc)).total_seconds())
                 if retry_after_seconds is None or retry_after_seconds > 0:
                     suffix = f":retry-after={retry_after_seconds}" if retry_after_seconds is not None else ""
