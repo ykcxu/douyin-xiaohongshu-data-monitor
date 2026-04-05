@@ -58,7 +58,8 @@ class LiveMonitorService:
 
     def debug_decode_room_frames(self, room_id: str, limit: int = 5) -> dict[str, object]:
         frames, cursor = self._get_sidecar().get_websocket_frames(room_id, since=0, direction="received")
-        recent = frames[-limit:] if limit > 0 else frames
+        binary_frames = [frame for frame in frames if frame.get("is_binary") and frame.get("data_b64")]
+        recent = binary_frames[-limit:] if limit > 0 else binary_frames
         decoded_items: list[dict[str, object]] = []
         for frame in recent:
             if not frame.get("is_binary") or not frame.get("data_b64"):
