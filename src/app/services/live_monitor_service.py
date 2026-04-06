@@ -37,6 +37,7 @@ class LiveMonitorService:
         self._room_frame_cursors: dict[str, int] = {}
         self._sidecar_errors: dict[str, str] = {}
         self._watcher_room_offset = 0
+        self._room_meta_probe_at: dict[str, datetime] = {}
 
     def _get_sidecar(self):
         return get_browser_sidecar()
@@ -276,6 +277,7 @@ class LiveMonitorService:
         ingested_rooms = 0
         stopped_rooms = 0
         newly_watched = 0
+        meta_checked_rooms = 0
         max_new_rooms = max(0, int(getattr(self.settings, "douyin_watcher_max_new_rooms_per_tick", 1) or 0))
         max_rooms = max(1, int(getattr(self.settings, "douyin_watcher_max_rooms_per_tick", 2) or 2))
 
@@ -317,7 +319,9 @@ class LiveMonitorService:
                 if after_cursor > before_cursor:
                     ingested_rooms += 1
 
-                current_meta = current_meta or self._safe_get_room_meta(room.room_id)
+                current_meta = current_meta or self._maybe_get_room_meta(room.room_id)
+                if current_meta is not None:
+                    meta_checked_rooms += 1
                 if current_meta and not current_meta.get("is_active", True):
                     self._stop_sidecar_watch(room.room_id)
                     stopped_rooms += 1
@@ -327,6 +331,7 @@ class LiveMonitorService:
             "ingested_rooms": ingested_rooms,
             "stopped_rooms": stopped_rooms,
             "newly_watched": newly_watched,
+            "meta_checked_rooms": meta_checked_rooms,
         }
 
     def _ensure_sidecar_watch(self, room: DouyinLiveRoom) -> None:
@@ -352,13 +357,23 @@ class LiveMonitorService:
                 room_url=room.room_url,
             )
             self._sidecar_errors.pop(room.room_id, None)
+            self._room_meta_probe_at.pop(room.room_id, None)
         except Exception as e:
             self._sidecar_errors[room.room_id] = f"{type(e).__name__}: {e}"
             print(f"[sidecar-watch-error] room_id={room.room_id} error={type(e).__name__}: {e}")
             return
 
+    def _maybe_get_room_meta(self, room_id: str) -> dict[str, object] | None:
+        now = datetime.now(timezone.utc)
+        last_probe_at = self._room_meta_probe_at.get(room_id)
+        if last_probe_at is not None and (now - last_probe_at).total_seconds() < 120:
+            return None
+        self._room_meta_probe_at[room_id] = now
+        return self._safe_get_room_meta(room_id)
+
     def _stop_sidecar_watch(self, room_id: str) -> None:
         self._room_frame_cursors.pop(room_id, None)
+        self._room_meta_probe_at.pop(room_id, None)
         try:
             self._get_sidecar().stop_watching(room_id)
         except Exception:
