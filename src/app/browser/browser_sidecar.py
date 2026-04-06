@@ -31,6 +31,7 @@ class RoomWatchSession:
     last_status: dict[str, Any] = field(default_factory=dict)
     last_update: datetime | None = None
     websocket_frames: list[dict[str, Any]] = field(default_factory=list)
+    websocket_next_seq: int = 0
     is_active: bool = True
 
 
@@ -343,6 +344,7 @@ class BrowserSidecar:
                 payload_preview = str(event.get("payload_preview") or payload_full[:5000])
                 payload = payload_full or payload_preview
                 item: dict[str, Any] = {
+                    "seq": session.websocket_next_seq,
                     "timestamp": event.get("ts") or datetime.now(timezone.utc).isoformat(),
                     "direction": "received" if event_name.endswith("received") else "sent",
                     "opcode": opcode,
@@ -350,6 +352,7 @@ class BrowserSidecar:
                     "url": session.ws_request_urls.get(request_id, ""),
                     "payload_length": event.get("payload_length"),
                 }
+                session.websocket_next_seq += 1
                 if opcode == 2 and payload:
                     item["is_binary"] = True
                     item["data_b64"] = payload
@@ -386,10 +389,10 @@ class BrowserSidecar:
         session = self._rooms.get(room_id)
         if session is None:
             return [], since
-        frames = session.websocket_frames[since:]
+        frames = [f for f in session.websocket_frames if int(f.get("seq", -1)) >= since]
         if direction is not None:
             frames = [f for f in frames if f.get("direction") == direction]
-        return frames, len(session.websocket_frames)
+        return frames, session.websocket_next_seq
 
     def get_room_meta(self, room_id: str) -> dict[str, Any] | None:
         return self._run_on_owner(lambda: self._get_room_meta_impl(room_id), timeout=5)
