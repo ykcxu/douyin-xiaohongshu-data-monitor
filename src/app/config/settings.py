@@ -40,6 +40,7 @@ class Settings(BaseSettings):
     douyin_challenge_retry_seconds: int = Field(default=900, alias="DOUYIN_CHALLENGE_RETRY_SECONDS")
     douyin_watcher_max_new_rooms_per_tick: int = Field(default=1, alias="DOUYIN_WATCHER_MAX_NEW_ROOMS_PER_TICK")
     douyin_watcher_max_rooms_per_tick: int = Field(default=2, alias="DOUYIN_WATCHER_MAX_ROOMS_PER_TICK")
+    douyin_watcher_watch_retry_seconds: int = Field(default=180, alias="DOUYIN_WATCHER_WATCH_RETRY_SECONDS")
 
     model_config = SettingsConfigDict(
         env_file=str(ENV_FILE),

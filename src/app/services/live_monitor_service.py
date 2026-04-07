@@ -38,6 +38,7 @@ class LiveMonitorService:
         self._sidecar_errors: dict[str, str] = {}
         self._watcher_room_offset = 0
         self._room_meta_probe_at: dict[str, datetime] = {}
+        self._room_watch_retry_at: dict[str, datetime] = {}
 
     def _get_sidecar(self):
         return get_browser_sidecar()
@@ -336,6 +337,12 @@ class LiveMonitorService:
 
     def _ensure_sidecar_watch(self, room: DouyinLiveRoom) -> None:
         try:
+            now = datetime.now(timezone.utc)
+            retry_at = self._room_watch_retry_at.get(room.room_id)
+            if retry_at is not None and retry_at > now:
+                retry_after_seconds = int((retry_at - now).total_seconds())
+                self._sidecar_errors[room.room_id] = f"skipped:watch-retry-after={retry_after_seconds}"
+                return
             if not room.account_id:
                 self._sidecar_errors[room.room_id] = "missing account_id"
                 return
@@ -345,7 +352,7 @@ class LiveMonitorService:
                 retry_after_seconds = None
                 if updated_at is not None:
                     retry_at = updated_at + timedelta(seconds=self.settings.douyin_challenge_retry_seconds)
-                    retry_after_seconds = int((retry_at - datetime.now(timezone.utc)).total_seconds())
+                    retry_after_seconds = int((retry_at - now).total_seconds())
                 if retry_after_seconds is None or retry_after_seconds > 0:
                     suffix = f":retry-after={retry_after_seconds}" if retry_after_seconds is not None else ""
                     self._sidecar_errors[room.room_id] = f"skipped:challenge-state{suffix}"
@@ -358,9 +365,12 @@ class LiveMonitorService:
             )
             self._sidecar_errors.pop(room.room_id, None)
             self._room_meta_probe_at.pop(room.room_id, None)
+            self._room_watch_retry_at.pop(room.room_id, None)
         except Exception as e:
-            self._sidecar_errors[room.room_id] = f"{type(e).__name__}: {e}"
-            print(f"[sidecar-watch-error] room_id={room.room_id} error={type(e).__name__}: {e}")
+            retry_seconds = max(30, int(getattr(self.settings, "douyin_watcher_watch_retry_seconds", 180) or 180))
+            self._room_watch_retry_at[room.room_id] = now + timedelta(seconds=retry_seconds)
+            self._sidecar_errors[room.room_id] = f"{type(e).__name__}: {e}:retry-after={retry_seconds}"
+            print(f"[sidecar-watch-error] room_id={room.room_id} error={type(e).__name__}: {e} retry_after={retry_seconds}")
             return
 
     def _maybe_get_room_meta(self, room_id: str) -> dict[str, object] | None:
@@ -374,6 +384,7 @@ class LiveMonitorService:
     def _stop_sidecar_watch(self, room_id: str) -> None:
         self._room_frame_cursors.pop(room_id, None)
         self._room_meta_probe_at.pop(room_id, None)
+        self._room_watch_retry_at.pop(room_id, None)
         try:
             self._get_sidecar().stop_watching(room_id)
         except Exception:
