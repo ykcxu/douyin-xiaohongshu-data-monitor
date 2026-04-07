@@ -40,6 +40,10 @@ status() {
   fi
 }
 
+manifest() {
+  cat runtime/reports/latest_manifest.json
+}
+
 case "${1:-}" in
   stop)
     stop_collect
@@ -57,8 +61,11 @@ case "${1:-}" in
   status)
     status
     ;;
+  manifest)
+    manifest
+    ;;
   *)
-    echo "Usage: $0 {stop|start|generate [YYYY-MM-DD]|cycle-generate [YYYY-MM-DD]|status}" >&2
+    echo "Usage: $0 {stop|start|generate [YYYY-MM-DD]|cycle-generate [YYYY-MM-DD]|status|manifest}" >&2
     exit 1
     ;;
 esac

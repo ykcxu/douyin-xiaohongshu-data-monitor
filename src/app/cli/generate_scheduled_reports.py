@@ -85,11 +85,11 @@ def _monthly_window(run_day: date) -> ReportWindow:
 
 def determine_windows(run_day: date) -> list[ReportWindow]:
     windows = [_daily_window(run_day)]
-    # 约定：每周一做上周周报；如果还是当月第一个周一，再补做上月月报。
+    # 每周一做上周周报；每月 1 号做上月月报。
     if run_day.weekday() == 0:
         windows.append(_weekly_window(run_day))
-        if run_day.day <= 7:
-            windows.append(_monthly_window(run_day))
+    if run_day.day == 1:
+        windows.append(_monthly_window(run_day))
     return windows
 
 
