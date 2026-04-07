@@ -38,14 +38,35 @@ class HttpDouyinLiveStatusCollector(DouyinLiveStatusCollector):
             )
 
         with self.build_client() as client:
+            # Step 1: Use the room page URL to ensure we have necessary cookies like ttwid
+            # and to extract the REAL web_rid (long ID) which is required for some API calls.
+            room_url = self._resolve_room_url(room)
             response = client.get(
-                self._resolve_room_url(room),
+                room_url,
                 headers=request_context.headers,
                 cookies=request_context.cookies,
             )
             response.raise_for_status()
 
-        page_state = self._extract_page_state(response.text)
+            # Find the true web_rid from the page HTML if possible
+            script_metadata = self._extract_room_script_metadata(response.text)
+            resolved_web_rid = (
+                (script_metadata.get("room_id") if script_metadata else None)
+                or room.room_id  # Fallback to the short ID if metadata extraction fails
+            )
+
+            # Step 2: Attempt to fetch detailed room data from the direct 'room/web/enter' API
+            try:
+                api_data = self._fetch_room_api_data(client, room, resolved_web_rid, request_context)
+                if api_data:
+                    return self._parse_api_room_status(api_data, room, room_url, now)
+            except Exception:
+                # API failure; fall back to the slower/less-reliable page parsing
+                pass
+
+            # Step 3: Fallback to page scraping if the API failed (using the already fetched response)
+            page_state = self._extract_page_state(response.text)
+
         script_metadata = self._extract_room_script_metadata(response.text)
         room_store = page_state.get("roomStore", {})
         room_info = room_store.get("roomInfo", {})
@@ -56,8 +77,6 @@ class HttpDouyinLiveStatusCollector(DouyinLiveStatusCollector):
                 f"Could not extract roomStore data from room page {response.url} for room {room.room_id}."
             )
 
-        # Douyin live pages sometimes expose a lightweight "liveStatus" marker even when the room is not live.
-        # Prefer stronger signals (stream URL or room status code embedded in the HTML) to avoid false positives.
         room_status_code = self._extract_int(script_metadata.get("room_status")) if script_metadata else None
         has_stream_url = bool(
             room_info.get("web_stream_url") or room_info.get("stream_url") or room_info.get("streamUrl")
@@ -71,7 +90,6 @@ class HttpDouyinLiveStatusCollector(DouyinLiveStatusCollector):
 
         resolved_live_status = live_status or "unknown"
         if room_status_code is not None:
-            # Convention used by many public spiders: 2 = live, 4 = offline.
             if room_status_code == 2:
                 resolved_live_status = "live"
             elif room_status_code == 4:
@@ -91,15 +109,9 @@ class HttpDouyinLiveStatusCollector(DouyinLiveStatusCollector):
                 "room_id": room.room_id,
                 "room_url": str(response.url),
                 "account_id": room.account_id,
-                "storage_state_path": (
-                    str(request_context.storage_state_path)
-                    if request_context.storage_state_path
-                    else None
-                ),
                 "has_cookies": bool(request_context.cookies),
             },
             "page_state": page_state,
-            "script_metadata": script_metadata,
         }
         return LiveRoomStatus(
             room_id=resolved_room_id,
@@ -117,6 +129,7 @@ class HttpDouyinLiveStatusCollector(DouyinLiveStatusCollector):
             share_count=self._extract_int(room_info.get("share_count")),
             raw_payload=raw_payload,
         )
+
 
     def build_client(self) -> httpx.Client:
         return httpx.Client(timeout=self.timeout_seconds, follow_redirects=True)
@@ -168,11 +181,19 @@ class HttpDouyinLiveStatusCollector(DouyinLiveStatusCollector):
         cookies = load_storage_state_cookies(storage_state_path)
         headers = {
             "user-agent": (
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
                 "AppleWebKit/537.36 (KHTML, like Gecko) "
                 "Chrome/124.0.0.0 Safari/537.36"
             ),
-            "referer": room.room_url or "https://live.douyin.com/",
+            "referer": "https://live.douyin.com/",
+            "accept": "application/json, text/plain, */*",
+            "accept-language": "zh-CN,zh;q=0.9,en-US;q=0.8,en;q=0.7",
+            "sec-ch-ua": '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
+            "sec-ch-ua-mobile": "?0",
+            "sec-ch-ua-platform": '"macOS"',
+            "sec-fetch-dest": "empty",
+            "sec-fetch-mode": "cors",
+            "sec-fetch-site": "same-origin",
         }
         return DouyinLiveRequestContext(
             account_id=room.account_id,
@@ -181,6 +202,102 @@ class HttpDouyinLiveStatusCollector(DouyinLiveStatusCollector):
             headers=headers,
             metadata={"room_pk": room.id, "room_id": room.room_id},
         )
+
+    def _fetch_room_api_data(
+        self,
+        client: httpx.Client,
+        room: DouyinLiveRoom,
+        web_rid: str,
+        request_context: DouyinLiveRequestContext,
+    ) -> dict[str, Any] | None:
+        """Calls the direct 'room/web/enter' API to get the most detailed room state."""
+        params = {
+            **self._build_common_query_params(),
+            "web_rid": web_rid,
+            "room_id_str": web_rid,  # Use the long ID for room_id_str as well for better consistency
+            "enter_source": "web_live",
+            "is_need_double_stream": "true",
+            "enter_type": "1",
+            "version_code": "251700",
+        }
+
+        url = "https://live.douyin.com/webcast/room/web/enter/?" + urlencode(params)
+        response = client.get(
+            url,
+            headers=request_context.headers,
+            cookies=request_context.cookies,
+        )
+        if response.status_code != 200:
+            return None
+        payload = response.json()
+        if payload.get("status_code") != 0:
+            return None
+        return payload.get("data")
+
+    def _parse_api_room_status(
+        self,
+        data: dict[str, Any],
+        room: DouyinLiveRoom,
+        source_url: str,
+        now: datetime,
+    ) -> LiveRoomStatus:
+        room_payload = self._find_nested_dict(data, {"room", "roomInfo", "room_data"}) or {}
+        owner_payload = self._find_nested_dict(data, {"owner", "anchor"}) or {}
+        stream_payload = self._find_nested_dict(data, {"stream_url", "streamUrl", "web_stream_url"})
+
+        resolved_room_id = self._normalize_text(room_payload.get("id_str")) or room.room_id
+        resolved_title = self._normalize_text(room_payload.get("title")) or room.live_title
+        status_num = self._extract_int(room_payload.get("status"))
+
+        # In API response, 2 usually means LIVE, 4 means OFFLINE
+        status_num = self._extract_int(room_payload.get("status"))
+        is_live = status_num == 2
+        resolved_live_status = "live" if is_live else "offline"
+        if status_num is None:
+            resolved_live_status = "unknown"
+            is_live = bool(stream_payload)
+
+        # Robustly extract stream URL from multiple possible locations
+        # Sometimes web_stream_url is null but the info exists in common_player_params or other places
+        resolved_stream_url = None
+        if stream_payload:
+            # Try to get the primary live URL (candidate selection might be needed for quality)
+            resolved_stream_url = stream_payload.get("main", {}).get("flv") or stream_payload.get("hls")
+            
+        if not resolved_stream_url:
+            # Deep dive into common_player_params if main payload is empty
+            player_params = room_payload.get("common_player_params", {})
+            if isinstance(player_params, str):
+                try:
+                    import json
+                    player_params = json.loads(player_params)
+                except Exception:
+                    player_params = {}
+            
+            resolved_stream_url = player_params.get("video_info", {}).get("main", {}).get("flv")
+
+        return LiveRoomStatus(
+            room_id=resolved_room_id,
+            fetched_at=now,
+            live_status=resolved_live_status,
+            is_live=is_live,
+            account_id=room.account_id,
+            nickname=self._normalize_text(owner_payload.get("nickname")) or room.nickname,
+            live_title=resolved_title,
+            source_url=source_url,
+            online_count=self._extract_int(room_payload.get("user_count")),
+            total_viewer_count=self._extract_int(room_payload.get("total_user_count")),
+            like_count=self._extract_int(room_payload.get("like_count")),
+            comment_count=self._extract_int(room_payload.get("comment_count")),
+            share_count=self._extract_int(room_payload.get("share_count")),
+            stream_url=resolved_stream_url,  # Explicitly set the resolved stream URL
+            raw_payload={
+                "collector": "http-api",
+                "fetched_at": now.isoformat(),
+                "data": data,
+            },
+        )
+
 
     def _build_request(
         self,
