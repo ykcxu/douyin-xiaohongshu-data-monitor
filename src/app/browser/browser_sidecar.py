@@ -78,6 +78,7 @@ class BrowserSidecar:
         self._ready = threading.Event()
         self._init_error: BaseException | None = None
         self._state_lock = threading.Lock()
+        self._data_lock = threading.RLock()
 
     def start(self) -> None:
         with self._state_lock:
@@ -204,16 +205,19 @@ class BrowserSidecar:
         return future.result(timeout=timeout)
 
     def _pump_room_events(self) -> None:
-        sessions = list(self._rooms.values())
+        with self._data_lock:
+            sessions = list(self._rooms.values())
         for session in sessions:
             page = session.page
             if page is None or not session.is_active:
                 continue
             try:
                 page.wait_for_timeout(50)
-                session.last_update = datetime.now(timezone.utc)
+                with self._data_lock:
+                    session.last_update = datetime.now(timezone.utc)
             except Exception:
-                session.is_active = False
+                with self._data_lock:
+                    session.is_active = False
 
     def _cleanup_stale_contexts(self) -> None:
         now = datetime.now(timezone.utc)
@@ -296,7 +300,8 @@ class BrowserSidecar:
         platform: str,
         room_url: str | None,
     ) -> RoomWatchSession:
-        existing = self._rooms.get(room_id)
+        with self._data_lock:
+            existing = self._rooms.get(room_id)
         if existing is not None:
             if existing.is_active and existing.page is not None:
                 return existing
@@ -317,7 +322,8 @@ class BrowserSidecar:
 
         session.page = page
         session.last_update = datetime.now(timezone.utc)
-        self._rooms[room_id] = session
+        with self._data_lock:
+            self._rooms[room_id] = session
         return session
 
     def _setup_websocket_monitoring(self, session: RoomWatchSession) -> None:
@@ -329,40 +335,41 @@ class BrowserSidecar:
             try:
                 event_name = str(event.get("event") or "")
                 request_id = str(event.get("request_id") or "")
-                if event_name == "cdp_websocket_created":
-                    if request_id:
-                        session.ws_request_ids.add(request_id)
-                        session.ws_request_urls[request_id] = str(event.get("url") or "")
-                    return
+                with self._data_lock:
+                    if event_name == "cdp_websocket_created":
+                        if request_id:
+                            session.ws_request_ids.add(request_id)
+                            session.ws_request_urls[request_id] = str(event.get("url") or "")
+                        return
 
-                if event_name not in {"cdp_websocket_frame_received", "cdp_websocket_frame_sent"}:
-                    return
-                if request_id and request_id not in session.ws_request_ids:
-                    session.ws_request_ids.add(request_id)
-                opcode = event.get("opcode")
-                payload_full = str(event.get("payload_data") or "")
-                payload_preview = str(event.get("payload_preview") or payload_full[:5000])
-                payload = payload_full or payload_preview
-                item: dict[str, Any] = {
-                    "seq": session.websocket_next_seq,
-                    "timestamp": event.get("ts") or datetime.now(timezone.utc).isoformat(),
-                    "direction": "received" if event_name.endswith("received") else "sent",
-                    "opcode": opcode,
-                    "request_id": request_id,
-                    "url": session.ws_request_urls.get(request_id, ""),
-                    "payload_length": event.get("payload_length"),
-                }
-                session.websocket_next_seq += 1
-                if opcode == 2 and payload:
-                    item["is_binary"] = True
-                    item["data_b64"] = payload
-                    item["data_b64_preview"] = payload_preview
-                else:
-                    item["is_binary"] = False
-                    item["text"] = payload_preview
-                session.websocket_frames.append(item)
-                if len(session.websocket_frames) > 1000:
-                    session.websocket_frames = session.websocket_frames[-1000:]
+                    if event_name not in {"cdp_websocket_frame_received", "cdp_websocket_frame_sent"}:
+                        return
+                    if request_id and request_id not in session.ws_request_ids:
+                        session.ws_request_ids.add(request_id)
+                    opcode = event.get("opcode")
+                    payload_full = str(event.get("payload_data") or "")
+                    payload_preview = str(event.get("payload_preview") or payload_full[:5000])
+                    payload = payload_full or payload_preview
+                    item: dict[str, Any] = {
+                        "seq": session.websocket_next_seq,
+                        "timestamp": event.get("ts") or datetime.now(timezone.utc).isoformat(),
+                        "direction": "received" if event_name.endswith("received") else "sent",
+                        "opcode": opcode,
+                        "request_id": request_id,
+                        "url": session.ws_request_urls.get(request_id, ""),
+                        "payload_length": event.get("payload_length"),
+                    }
+                    session.websocket_next_seq += 1
+                    if opcode == 2 and payload:
+                        item["is_binary"] = True
+                        item["data_b64"] = payload
+                        item["data_b64_preview"] = payload_preview
+                    else:
+                        item["is_binary"] = False
+                        item["text"] = payload_preview
+                    session.websocket_frames.append(item)
+                    if len(session.websocket_frames) > 1000:
+                        session.websocket_frames = session.websocket_frames[-1000:]
             except Exception:
                 pass
 
@@ -386,18 +393,21 @@ class BrowserSidecar:
         since: int,
         direction: str | None,
     ) -> tuple[list[dict[str, Any]], int]:
-        session = self._rooms.get(room_id)
-        if session is None:
-            return [], since
-        frames = [f for f in session.websocket_frames if int(f.get("seq", -1)) >= since]
+        with self._data_lock:
+            session = self._rooms.get(room_id)
+            if session is None:
+                return [], since
+            frames = [dict(f) for f in session.websocket_frames if int(f.get("seq", -1)) >= since]
+            next_seq = session.websocket_next_seq
         if direction is not None:
             frames = [f for f in frames if f.get("direction") == direction]
-        return frames, session.websocket_next_seq
+        return frames, next_seq
 
     def get_room_meta(self, room_id: str) -> dict[str, Any] | None:
-        return self._run_on_owner(lambda: self._get_room_meta_impl(room_id), timeout=5)
+        with self._data_lock:
+            return self._get_room_meta_snapshot(room_id)
 
-    def _get_room_meta_impl(self, room_id: str) -> dict[str, Any] | None:
+    def _get_room_meta_snapshot(self, room_id: str) -> dict[str, Any] | None:
         session = self._rooms.get(room_id)
         if session is None:
             return None
@@ -409,11 +419,16 @@ class BrowserSidecar:
             "websocket_urls": list(session.ws_request_urls.values())[:20],
         }
 
+    def _get_room_meta_impl(self, room_id: str) -> dict[str, Any] | None:
+        with self._data_lock:
+            return self._get_room_meta_snapshot(room_id)
+
     def get_room_status(self, room_id: str) -> dict[str, Any] | None:
         return self._run_on_owner(lambda: self._get_room_status_impl(room_id))
 
     def _get_room_status_impl(self, room_id: str) -> dict[str, Any] | None:
-        session = self._rooms.get(room_id)
+        with self._data_lock:
+            session = self._rooms.get(room_id)
         if session is None or session.page is None:
             return None
         if not session.is_active:
@@ -467,7 +482,8 @@ class BrowserSidecar:
         return self._run_on_owner(lambda: self._refresh_room_impl(room_id))
 
     def _refresh_room_impl(self, room_id: str) -> bool:
-        session = self._rooms.get(room_id)
+        with self._data_lock:
+            session = self._rooms.get(room_id)
         if session is None or session.page is None:
             return False
         try:
@@ -483,7 +499,8 @@ class BrowserSidecar:
         return self._run_on_owner(lambda: self._stop_watching_impl(room_id))
 
     def _stop_watching_impl(self, room_id: str) -> bool:
-        session = self._rooms.pop(room_id, None)
+        with self._data_lock:
+            session = self._rooms.pop(room_id, None)
         if session is None:
             return False
         try:
@@ -517,10 +534,13 @@ class BrowserSidecar:
         return self._run_on_owner(self._get_stats_impl)
 
     def _get_stats_impl(self) -> dict[str, Any]:
+        with self._data_lock:
+            contexts = list(self._contexts.values())
+            rooms = list(self._rooms.values())
         return {
             "running": self._running,
-            "contexts_count": len(self._contexts),
-            "rooms_count": len(self._rooms),
+            "contexts_count": len(contexts),
+            "rooms_count": len(rooms),
             "contexts": [
                 {
                     "account_id": entry.account_id,
@@ -528,7 +548,7 @@ class BrowserSidecar:
                     "last_used": entry.last_used.isoformat(),
                     "is_valid": entry.is_valid,
                 }
-                for entry in self._contexts.values()
+                for entry in contexts
             ],
             "rooms": [
                 {
@@ -540,7 +560,7 @@ class BrowserSidecar:
                     "ws_request_ids": len(session.ws_request_ids),
                     "ws_urls": list(session.ws_request_urls.values())[:10],
                 }
-                for session in self._rooms.values()
+                for session in rooms
             ],
         }
 
