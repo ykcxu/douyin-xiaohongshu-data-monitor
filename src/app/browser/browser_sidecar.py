@@ -382,9 +382,7 @@ class BrowserSidecar:
         since: int = 0,
         direction: str | None = None,
     ) -> tuple[list[dict[str, Any]], int]:
-        return self._run_on_owner(
-            lambda: self._get_websocket_frames_impl(room_id=room_id, since=since, direction=direction)
-        )
+        return self._get_websocket_frames_impl(room_id=room_id, since=since, direction=direction)
 
     def _get_websocket_frames_impl(
         self,
@@ -531,7 +529,7 @@ class BrowserSidecar:
         return result
 
     def get_stats(self) -> dict[str, Any]:
-        return self._run_on_owner(self._get_stats_impl)
+        return self._get_stats_impl()
 
     def _get_stats_impl(self) -> dict[str, Any]:
         with self._data_lock:
