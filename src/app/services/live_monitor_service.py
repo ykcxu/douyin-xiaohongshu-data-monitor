@@ -282,6 +282,12 @@ class LiveMonitorService:
         configured_max_new_rooms = max(0, int(getattr(self.settings, "douyin_watcher_max_new_rooms_per_tick", 1) or 0))
         max_rooms = max(1, int(getattr(self.settings, "douyin_watcher_max_rooms_per_tick", 2) or 2))
         max_new_rooms = configured_max_new_rooms
+        sidecar_stats = self._safe_get_sidecar_stats()
+        sidecar_room_ids = {
+            str(item.get("room_id"))
+            for item in sidecar_stats.get("rooms", [])
+            if item.get("room_id")
+        }
 
         with get_db_session() as session:
             stmt = (
@@ -306,8 +312,11 @@ class LiveMonitorService:
                 if watched >= max_rooms:
                     break
                 watched += 1
-                already_watching = room.room_id in self._room_frame_cursors
+                already_watching = room.room_id in self._room_frame_cursors or room.room_id in sidecar_room_ids
                 current_meta = None
+                if already_watching and room.room_id in sidecar_room_ids:
+                    self._room_frame_cursors.setdefault(room.room_id, 0)
+                    current_meta = self._safe_get_room_meta(room.room_id)
                 if not already_watching:
                     if newly_watched >= max_new_rooms:
                         continue
