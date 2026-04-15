@@ -137,9 +137,15 @@ class LiveMonitorService:
                 push_meta = {"push_inspect_error": str(inspect_error)}
 
             message_count = len(getattr(result, "messages", []) or [])
-            is_heartbeat = str(push_payload_type or "").lower() == "hb"
+            push_payload_type_text = str(push_payload_type or "").lower()
+            is_heartbeat = push_payload_type_text == "hb"
+            is_control_json = push_payload_type_text == "text/json" or getattr(result, "error", "") == "control_json"
 
-            meaningful = bool(result.error) or (message_count > 0) or (not is_heartbeat)
+            meaningful = (
+                (message_count > 0)
+                or (bool(result.error) and not is_control_json)
+                or ((not is_heartbeat) and (not is_control_json))
+            )
             if not meaningful:
                 continue
 
