@@ -124,6 +124,18 @@ class LiveMonitorService:
                 "error": result.error,
                 "message_count": len(result.messages),
                 "methods": [m.method for m in result.messages[:20]],
+                "messages_preview": [
+                    {
+                        "msg_id": m.msg_id,
+                        "method": m.method,
+                        "room_id": m.room_id,
+                        "timestamp": m.timestamp,
+                        "user_id": m.user_id,
+                        "nickname": m.nickname,
+                        "content": m.content,
+                    }
+                    for m in result.messages[:5]
+                ],
                 **push_meta,
             })
         stats = self._safe_get_sidecar_stats()
