@@ -321,6 +321,9 @@ class LiveMonitorService:
     def watcher_tick_once(self) -> dict[str, int]:
         watched = 0
         ingested_rooms = 0
+        decoded_message_rooms = 0
+        comment_written_rooms = 0
+        inserted_comments = 0
         stopped_rooms = 0
         newly_watched = 0
         meta_checked_rooms = 0
@@ -372,11 +375,13 @@ class LiveMonitorService:
                     self._room_frame_cursors.setdefault(room.room_id, 0)
                     newly_watched += 1
 
-                before_cursor = self._room_frame_cursors.get(room.room_id, 0)
-                self._ingest_sidecar_messages(room, live_session)
-                after_cursor = self._room_frame_cursors.get(room.room_id, before_cursor)
-                if after_cursor > before_cursor:
+                ingest_result = self._ingest_sidecar_messages(room, live_session)
+                if ingest_result.get("decoded_messages", 0) > 0:
+                    decoded_message_rooms += 1
+                if ingest_result.get("inserted_comments", 0) > 0:
                     ingested_rooms += 1
+                    comment_written_rooms += 1
+                    inserted_comments += int(ingest_result.get("inserted_comments", 0))
 
                 current_meta = current_meta or self._maybe_get_room_meta(room.room_id)
                 if current_meta is not None:
@@ -388,6 +393,9 @@ class LiveMonitorService:
         return {
             "watched": watched,
             "ingested_rooms": ingested_rooms,
+            "decoded_message_rooms": decoded_message_rooms,
+            "comment_written_rooms": comment_written_rooms,
+            "inserted_comments": inserted_comments,
             "stopped_rooms": stopped_rooms,
             "newly_watched": newly_watched,
             "meta_checked_rooms": meta_checked_rooms,
@@ -448,8 +456,13 @@ class LiveMonitorService:
         except Exception:
             pass
 
-    def _ingest_sidecar_messages(self, room: DouyinLiveRoom, live_session: DouyinLiveSession) -> None:
+    def _ingest_sidecar_messages(self, room: DouyinLiveRoom, live_session: DouyinLiveSession) -> dict[str, int]:
         cursor = self._room_frame_cursors.get(room.room_id, 0)
+        result = {
+            "frames": 0,
+            "decoded_messages": 0,
+            "inserted_comments": 0,
+        }
         try:
             frames, next_cursor = self._get_sidecar().get_websocket_frames(
                 room.room_id,
@@ -459,8 +472,9 @@ class LiveMonitorService:
         except Exception as e:
             self._sidecar_errors[room.room_id] = f"frame-read {type(e).__name__}: {e}"
             print(f"[sidecar-frame-error] room_id={room.room_id} error={type(e).__name__}: {e}")
-            return
+            return result
         self._room_frame_cursors[room.room_id] = next_cursor
+        result["frames"] = len(frames)
 
         for frame in frames:
             if not frame.get("is_binary"):
@@ -481,6 +495,7 @@ class LiveMonitorService:
                     "WebcastSocialMessage",
                 }:
                     continue
+                result["decoded_messages"] += 1
                 payload = {
                     "message_id": str(msg.msg_id or f"{live_session.session_no}-{msg.method}-{frame.get('timestamp')}-{msg.user_id}"),
                     "message_type": msg.method.replace("Webcast", "").replace("Message", "").lower(),
@@ -508,8 +523,11 @@ class LiveMonitorService:
                         session_no=live_session.session_no,
                         comment_payload=payload,
                     )
+                    result["inserted_comments"] += 1
                 except Exception:
                     continue
+
+        return result
 
     def _build_message_content(self, msg) -> str:
         if msg.gift_name:
