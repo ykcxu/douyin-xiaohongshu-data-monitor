@@ -83,36 +83,66 @@ class LiveMonitorService:
     def debug_decode_room_frames(self, room_id: str, limit: int = 5) -> dict[str, object]:
         frames, cursor = self._get_sidecar().get_websocket_frames(room_id, since=0, direction="received")
         binary_frames = [frame for frame in frames if frame.get("is_binary") and frame.get("data_b64")]
-        recent = binary_frames[-limit:] if limit > 0 else binary_frames
+
+        # Most rooms produce a lot of heartbeat frames (payloadType=hb) which decode to 0 messages.
+        # For debugging the real ingest pipeline we prefer frames that actually carry decoded messages.
+        # We scan backwards from the newest frames and pick the first N meaningful samples.
         decoded_items: list[dict[str, object]] = []
-        for frame in recent:
-            if not frame.get("is_binary") or not frame.get("data_b64"):
+        scanned = 0
+        max_scan = max(200, (limit or 0) * 200)
+
+        for frame in reversed(binary_frames):
+            if limit > 0 and len(decoded_items) >= limit:
+                break
+            scanned += 1
+            if scanned > max_scan:
+                break
+            if not frame.get("data_b64"):
                 continue
+
             data_b64 = str(frame["data_b64"])
-            result = self.ws_decoder.decode_frame_base64(data_b64)
             raw_prefix_hex = None
             raw_len = None
+            raw: bytes | None = None
             try:
                 raw = base64.b64decode(data_b64)
                 raw_len = len(raw)
                 raw_prefix_hex = raw[:24].hex()
             except Exception:
-                pass
-            push_meta: dict[str, object] = {}
+                raw = None
+
+            # Decode via protobuf decoder (business messages). Keep errors for visibility.
             try:
-                push_frame = pb.PushFrame()
-                push_frame.ParseFromString(raw)
-                payload_preview_bytes = bytes(push_frame.payload[:120])
-                payload_preview_text = payload_preview_bytes.decode("utf-8", errors="replace")
-                push_meta = {
-                    "push_payload_type": push_frame.payloadType,
-                    "push_payload_encoding": push_frame.payloadEncoding,
-                    "push_payload_len": len(push_frame.payload),
-                    "push_payload_preview_text": payload_preview_text,
-                    "push_headers": MessageToDict(push_frame).get("headersList", [])[:10],
-                }
+                result = self.ws_decoder.decode_frame_base64(data_b64)
+            except Exception as exc:
+                result = type("_R", (), {"error": f"decode_exception:{type(exc).__name__}:{exc}", "messages": []})()
+
+            push_meta: dict[str, object] = {}
+            push_payload_type = None
+            try:
+                if raw is not None:
+                    push_frame = pb.PushFrame()
+                    push_frame.ParseFromString(raw)
+                    payload_preview_bytes = bytes(push_frame.payload[:120])
+                    payload_preview_text = payload_preview_bytes.decode("utf-8", errors="replace")
+                    push_payload_type = push_frame.payloadType
+                    push_meta = {
+                        "push_payload_type": push_frame.payloadType,
+                        "push_payload_encoding": push_frame.payloadEncoding,
+                        "push_payload_len": len(push_frame.payload),
+                        "push_payload_preview_text": payload_preview_text,
+                        "push_headers": MessageToDict(push_frame).get("headersList", [])[:10],
+                    }
             except Exception as inspect_error:
                 push_meta = {"push_inspect_error": str(inspect_error)}
+
+            message_count = len(getattr(result, "messages", []) or [])
+            is_heartbeat = str(push_payload_type or "").lower() == "hb"
+
+            meaningful = bool(result.error) or (message_count > 0) or (not is_heartbeat)
+            if not meaningful:
+                continue
+
             decoded_items.append({
                 "timestamp": frame.get("timestamp"),
                 "request_id": frame.get("request_id"),
@@ -121,9 +151,9 @@ class LiveMonitorService:
                 "opcode": frame.get("opcode"),
                 "raw_len": raw_len,
                 "raw_prefix_hex": raw_prefix_hex,
-                "error": result.error,
-                "message_count": len(result.messages),
-                "methods": [m.method for m in result.messages[:20]],
+                "error": getattr(result, "error", ""),
+                "message_count": message_count,
+                "methods": [m.method for m in (getattr(result, "messages", []) or [])[:20]],
                 "messages_preview": [
                     {
                         "msg_id": m.msg_id,
@@ -134,10 +164,12 @@ class LiveMonitorService:
                         "nickname": m.nickname,
                         "content": m.content,
                     }
-                    for m in result.messages[:5]
+                    for m in (getattr(result, "messages", []) or [])[:5]
                 ],
                 **push_meta,
             })
+
+        decoded_items.reverse()
         stats = self._safe_get_sidecar_stats()
         room_stats = next((x for x in stats.get("rooms", []) if x.get("room_id") == room_id), {})
         return {
@@ -146,6 +178,7 @@ class LiveMonitorService:
             "cursor": cursor,
             "ws_urls": room_stats.get("ws_urls", []),
             "decoded_samples": decoded_items,
+            "scanned_binary_frames": scanned,
         }
 
     def debug_room_frames(self, room_id: str, limit: int = 20) -> dict[str, object]:
