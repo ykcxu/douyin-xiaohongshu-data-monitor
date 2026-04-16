@@ -415,27 +415,35 @@ class LiveMonitorService:
                 retry_after_seconds = int((retry_at - now).total_seconds())
                 self._sidecar_errors[room.room_id] = f"skipped:watch-retry-after={retry_after_seconds}"
                 return
-            if not room.account_id:
-                self._sidecar_errors[room.room_id] = "missing account_id"
-                return
-            login_state = self.login_state_service.get_state(platform="douyin", account_id=room.account_id)
-            if login_state is not None and login_state.status == "challenge":
-                updated_at = getattr(login_state, "updated_at", None)
-                retry_after_seconds = None
-                if updated_at is not None:
-                    retry_at = updated_at + timedelta(seconds=self.settings.douyin_challenge_retry_seconds)
-                    retry_after_seconds = int((retry_at - now).total_seconds())
-                if retry_after_seconds is None or retry_after_seconds > 0:
-                    suffix = f":retry-after={retry_after_seconds}" if retry_after_seconds is not None else ""
-                    self._sidecar_errors[room.room_id] = f"skipped:challenge-state{suffix}"
-                    return
+
+            watch_account_id = room.account_id or "__anonymous__"
+            watch_mode = "authenticated"
+
+            if room.account_id:
+                login_state = self.login_state_service.get_state(platform="douyin", account_id=room.account_id)
+                if login_state is not None and login_state.status == "challenge":
+                    updated_at = getattr(login_state, "updated_at", None)
+                    retry_after_seconds = None
+                    if updated_at is not None:
+                        retry_at = updated_at + timedelta(seconds=self.settings.douyin_challenge_retry_seconds)
+                        retry_after_seconds = int((retry_at - now).total_seconds())
+                    if retry_after_seconds is None or retry_after_seconds > 0:
+                        watch_account_id = "__anonymous__"
+                        watch_mode = "anonymous-fallback"
+                        suffix = f":retry-after={retry_after_seconds}" if retry_after_seconds is not None else ""
+                        self._sidecar_errors[room.room_id] = f"using:{watch_mode}:challenge-state{suffix}"
+            else:
+                watch_mode = "anonymous-missing-account"
+                self._sidecar_errors[room.room_id] = f"using:{watch_mode}"
+
             self._get_sidecar().watch_room(
                 room_id=room.room_id,
-                account_id=room.account_id,
+                account_id=watch_account_id,
                 platform="douyin",
                 room_url=room.room_url,
             )
-            self._sidecar_errors.pop(room.room_id, None)
+            if watch_mode == "authenticated":
+                self._sidecar_errors.pop(room.room_id, None)
             self._room_meta_probe_at.pop(room.room_id, None)
             self._room_watch_retry_at.pop(room.room_id, None)
         except Exception as e:
